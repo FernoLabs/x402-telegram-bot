@@ -1,72 +1,76 @@
 <script lang="ts">
-  const groups = [
-    {
-      name: 'Memecoin Cabal',
-      focus: 'Markets & rapid launches',
-      members: '12,500',
-      price: '1.00 USDC',
-      pace: 'Open 24/7'
-    },
-    {
-      name: 'Ferno Tech Expert',
-      focus: 'Infrastructure founders',
-      members: '8,900',
-      price: '1.50 USDC',
-      pace: 'Weekdays only'
-    },
-    {
-      name: 'Monkey DAO',
-      focus: 'Solana NFT collectors',
-      members: '15,300',
-      price: '0.75 USDC',
-      pace: 'Afternoons UTC'
-    }
-  ];
+  import type { Group } from '$lib/types';
+
+  export let data: { groups: Group[]; loadError: boolean };
+
+  const currencyFormatter = new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+  const numberFormatter = new Intl.NumberFormat('en-US');
+
+  const groups = data.groups.filter((group) => group.active);
+
+  const formatUsd = (value: number) => currencyFormatter.format(value);
+  const formatMessages = (count: number) => numberFormatter.format(count);
 </script>
 
 <section class="page" aria-labelledby="groups-title">
   <header>
     <h2 id="groups-title">Active groups</h2>
     <p>
-      These communities accept paid posts through x402. Each listing shows the current USDC price per
-      message and the posting cadence so you can plan ahead.
+      These communities accept paid posts through x402. Listings reflect the live minimum bid, wallet,
+      and delivery stats pulled directly from the database.
     </p>
   </header>
 
-  <table>
-    <caption class="visually-hidden">Telegram groups enabled for x402 payments</caption>
-    <thead>
-      <tr>
-        <th scope="col">Group</th>
-        <th scope="col">Focus</th>
-        <th scope="col">Members</th>
-        <th scope="col">Price per message</th>
-        <th scope="col">Availability</th>
-        <th scope="col" class="actions">Action</th>
-      </tr>
-    </thead>
-    <tbody>
-      {#each groups as group}
+  {#if data.loadError}
+    <div class="error" role="alert">
+      <strong>Unable to load groups.</strong>
+      <span>Check your connection or try again after refreshing.</span>
+    </div>
+  {/if}
+
+  {#if groups.length > 0}
+    <table>
+      <caption class="visually-hidden">Telegram groups enabled for x402 payments</caption>
+      <thead>
         <tr>
-          <th scope="row">{group.name}</th>
-          <td>{group.focus}</td>
-          <td>{group.members}</td>
-          <td>{group.price}</td>
-          <td>{group.pace}</td>
-          <td class="actions">
-            <a href="/send" class="action">Send message</a>
-          </td>
+          <th scope="col">Group</th>
+          <th scope="col">Telegram ID</th>
+          <th scope="col">Price per message</th>
+          <th scope="col">Messages sent</th>
+          <th scope="col">Total earned</th>
+          <th scope="col" class="actions">Action</th>
         </tr>
-      {/each}
-    </tbody>
-  </table>
+      </thead>
+      <tbody>
+        {#each groups as group (group.id)}
+          <tr>
+            <th scope="row">{group.name}</th>
+            <td>{group.telegramId}</td>
+            <td>{formatUsd(group.minBid)}</td>
+            <td>{formatMessages(group.messageCount)}</td>
+            <td>{formatUsd(group.totalEarned)}</td>
+            <td class="actions">
+              <a href={`/send?groupId=${group.id}`} class="action">Send message</a>
+            </td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  {:else}
+    <p class="empty" role="status">No groups are currently active. Add one from the setup guide.</p>
+  {/if}
 
   <section class="note" aria-labelledby="note-title">
     <h3 id="note-title">How pricing works</h3>
     <p>
       Senders pay the listed amount in USDC on the Solana network using x402. Payments confirm within
       seconds and the bot posts the message with a receipt. Group owners can pause listings or adjust
-      pricing at any time.
+      pricing at any time from Telegram using the /setprice command.
     </p>
     <a class="action" href="/setup">Add your group</a>
   </section>
@@ -97,6 +101,20 @@
     margin: 0;
     color: #475569;
     line-height: 1.6;
+  }
+
+  .error {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 14px;
+    padding: 1rem 1.25rem;
+    display: grid;
+    gap: 0.35rem;
+    color: #991b1b;
+  }
+
+  .error strong {
+    font-weight: 600;
   }
 
   table {
@@ -151,6 +169,15 @@
   .actions {
     text-align: right;
     min-width: 130px;
+  }
+
+  .empty {
+    margin: 0;
+    padding: 1rem 1.25rem;
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 16px;
+    color: #475569;
   }
 
   .note {
