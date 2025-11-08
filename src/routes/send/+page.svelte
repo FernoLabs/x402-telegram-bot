@@ -363,16 +363,16 @@
     note: string
   ): string {
     const origin = typeof window !== 'undefined' && window.location ? window.location.origin : null;
-    const facilitator = resolveFacilitator(request);
-    const checkout = resolveCheckoutUrl(request);
-    const base = origin ? new URL('/pay', origin) : resolveFacilitatorCheckoutBase(facilitator, checkout);
+    const base = origin ? new URL('/pay', origin) : new URL('https://payai.network/pay');
 
     const amount = resolveAmount(request);
     const recipient = resolveRecipient(request);
     const currency = resolveCurrency(request);
     const network = resolveNetwork(request);
+    const facilitator = resolveFacilitator(request);
     const paymentId = resolvePaymentId(request);
     const nonce = resolveNonce(request);
+    const checkout = resolveCheckoutUrl(request);
 
     if (amount !== null) {
       base.searchParams.set('amount', amount.toString());

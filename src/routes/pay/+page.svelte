@@ -35,32 +35,8 @@
     });
   };
 
-  const DEFAULT_FACILITATOR_CHECKOUT_URL = 'https://facilitator.payai.network/pay';
-
-  const resolveFacilitatorCheckoutBase = () => {
-    if (data.payment.facilitator) {
-      try {
-        const facilitatorUrl = new URL(data.payment.facilitator);
-        return new URL('/pay', facilitatorUrl);
-      } catch (parseError) {
-        console.warn('Invalid facilitator URL provided', parseError);
-      }
-    }
-
-    if (data.payment.checkout) {
-      try {
-        const checkoutUrl = new URL(data.payment.checkout);
-        return new URL('/pay', checkoutUrl);
-      } catch (parseError) {
-        console.warn('Invalid checkout URL provided', parseError);
-      }
-    }
-
-    return new URL(DEFAULT_FACILITATOR_CHECKOUT_URL);
-  };
-
   const buildFallbackCheckoutUrl = () => {
-    const url = resolveFacilitatorCheckoutBase();
+    const url = new URL('https://payai.network/pay');
     url.searchParams.set('amount', data.payment.amount.toString());
     url.searchParams.set('recipient', data.payment.recipient);
     url.searchParams.set('currency', data.payment.currency);
@@ -76,10 +52,6 @@
 
     if (data.payment.facilitator) {
       url.searchParams.set('facilitator', data.payment.facilitator);
-    }
-
-    if (data.payment.checkout) {
-      url.searchParams.set('checkout', data.payment.checkout);
     }
 
     if (data.payment.paymentId) {
