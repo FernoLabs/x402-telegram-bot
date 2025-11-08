@@ -54,11 +54,14 @@ export const POST: RequestHandler = async ({ request }) => {
     if (telegramBot && group.telegramId) {
       try {
         const messageText = telegramBot.formatAuctionMessage(auction);
-        await telegramBot.sendMessage(group.telegramId, messageText);
-        
-        db.updateAuction(auction.id, { 
+        const telegramResponse = await telegramBot.sendMessage(group.telegramId, messageText);
+        const messageId = telegramResponse?.result?.message_id;
+
+        db.updateAuction(auction.id, {
           status: 'active',
-          postedAt: new Date() 
+          postedAt: new Date(),
+          telegramChatId: group.telegramId,
+          telegramMessageId: messageId
         });
       } catch (error) {
         console.error('Failed to post to Telegram:', error);

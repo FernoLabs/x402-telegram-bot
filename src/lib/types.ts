@@ -23,6 +23,8 @@ export interface Auction {
   responses: AuctionResponse[];
   createdAt: Date;
   postedAt?: Date;
+  telegramMessageId?: number;
+  telegramChatId?: string;
 }
 
 export interface AuctionResponse {

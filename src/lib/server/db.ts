@@ -76,6 +76,17 @@ class Database {
     }
     return undefined;
   }
+
+  findAuctionByTelegramMessage(chatId: string, messageId: number): Auction | undefined {
+    return Array.from(this.auctions.values()).find(
+      (auction) => auction.telegramChatId === chatId && auction.telegramMessageId === messageId
+    );
+  }
+
+  getResponses(auctionId: number): AuctionResponse[] {
+    const auction = this.auctions.get(auctionId);
+    return auction ? auction.responses : [];
+  }
 }
 
 export const db = new Database();
