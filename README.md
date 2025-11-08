@@ -92,7 +92,9 @@ x-payment-txhash: 0xtransactionhash
 
 The worker returns an HTTP 402 response with the recipient address and amount when additional payment is required.
 
-Responses return structured x402 metadata describing the on-chain transfer that must be completed. The `/send` page now lists every outstanding payment request, lets operators connect a Solana wallet (Phantom, Solflare, Coinbase, Trust, or Torus), and can generate and submit the transfer directly through the browser. After submitting a Solana transaction—either manually or via the built-in wallet flow—resubmit the request with the transaction signature in the `x-payment-txhash` header so the worker can verify the transfer directly against Solana RPC.
+Responses return structured x402 metadata describing the on-chain transfer that must be completed. After submitting a Solana
+transaction, resubmit the request with the transaction signature in the `x-payment-txhash` header so the worker can verify the
+transfer directly against Solana RPC.
 
 ## Telegram webhook flow
 
