@@ -1,7 +1,7 @@
 <script lang="ts">
   export let data: { botHandle: string | null; botId: string | null };
 
-  const defaultHandle = '@x402_bot';
+  const defaultHandle = '@AuctionGateway_bot';
   const normalizedHandle = data.botHandle && data.botHandle.trim().length > 0 ? data.botHandle : defaultHandle;
   const botHandle = normalizedHandle.startsWith('@') ? normalizedHandle : `@${normalizedHandle}`;
   const botId = data.botId?.trim().length ? data.botId : null;

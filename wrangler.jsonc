@@ -19,7 +19,7 @@
 	},
 	"d1_databases": [
 		{
-			"binding": "x402_auction_db",
+			"binding": "DB",
 			"database_name": "x402-auction-db",
 			"database_id": "c7203407-91b0-4830-8079-394f5d8e436e"
 		}
