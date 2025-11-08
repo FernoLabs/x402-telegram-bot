@@ -73,7 +73,7 @@
   };
 
   function buildPaymentUrl(request: PaymentRequestData, group: Group | null, note: string): string {
-    const url = new URL('https://www.x402.org/pay');
+    const url = new URL('https://payai.network/pay');
     url.searchParams.set('amount', request.amount.toString());
     url.searchParams.set('recipient', request.recipient);
 
