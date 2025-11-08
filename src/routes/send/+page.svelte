@@ -232,6 +232,22 @@
     return null;
   };
 
+  const resolveCheckoutUrl = (request: PaymentRequestData): string | null => {
+    const direct = resolveStringField([request.checkoutUrl]);
+    if (direct) {
+      return direct;
+    }
+    if (request.accepts) {
+      for (const option of request.accepts) {
+        const found = resolveStringField([option.url]);
+        if (found) {
+          return found;
+        }
+      }
+    }
+    return null;
+  };
+
   const resolvePaymentId = (request: PaymentRequestData): string | null => {
     const direct = resolveStringField([request.paymentId]);
     if (direct) {
@@ -311,6 +327,70 @@
     }
 
     return url.toString();
+  }
+
+  function buildHostedInstructionsUrl(
+    request: PaymentRequestData,
+    group: Group | null,
+    note: string
+  ): string {
+    const origin = typeof window !== 'undefined' && window.location ? window.location.origin : null;
+    const base = origin ? new URL('/pay', origin) : new URL('https://payai.network/pay');
+
+    const amount = resolveAmount(request);
+    const recipient = resolveRecipient(request);
+    const currency = resolveCurrency(request);
+    const network = resolveNetwork(request);
+    const facilitator = resolveFacilitator(request);
+    const paymentId = resolvePaymentId(request);
+    const nonce = resolveNonce(request);
+    const checkout = resolveCheckoutUrl(request);
+
+    if (amount !== null) {
+      base.searchParams.set('amount', amount.toString());
+    }
+
+    if (recipient) {
+      base.searchParams.set('recipient', recipient);
+    }
+
+    if (currency) {
+      base.searchParams.set('currency', currency);
+    }
+
+    if (network) {
+      base.searchParams.set('network', network);
+    }
+
+    if (group) {
+      base.searchParams.set('group', group.name);
+    }
+
+    if (note) {
+      base.searchParams.set('memo', note);
+    }
+
+    if (facilitator) {
+      base.searchParams.set('facilitator', facilitator);
+    }
+
+    if (paymentId) {
+      base.searchParams.set('paymentId', paymentId);
+    }
+
+    if (nonce) {
+      base.searchParams.set('nonce', nonce);
+    }
+
+    if (checkout) {
+      base.searchParams.set('checkout', checkout);
+    }
+
+    if (request.expiresAt) {
+      base.searchParams.set('expiresAt', request.expiresAt);
+    }
+
+    return base.toString();
   }
 
   const parseSelectedGroupId = (value: string): number | null => {
@@ -410,7 +490,10 @@
   $: minimumBid = selectedGroup ? formatUsd(selectedGroup.minBid) : null;
   $: resolvedMemo = paymentRequest?.memo?.trim() ?? message.trim();
   $: paymentUrl = paymentRequest
-    ? paymentRequest.checkoutUrl ?? buildPaymentUrl(paymentRequest, selectedGroup, resolvedMemo)
+    ? resolveCheckoutUrl(paymentRequest) ?? buildPaymentUrl(paymentRequest, selectedGroup, resolvedMemo)
+    : null;
+  $: hostedInstructionsUrl = paymentRequest
+    ? buildHostedInstructionsUrl(paymentRequest, selectedGroup, resolvedMemo)
     : null;
   $: paymentAmount = paymentRequest ? resolveAmount(paymentRequest) : null;
   $: paymentCurrency = paymentRequest ? resolveCurrency(paymentRequest) : null;
@@ -630,6 +713,11 @@
           Open x402 checkout
         </button>
       {/if}
+      {#if hostedInstructionsUrl}
+        <a class="secondary-link" href={hostedInstructionsUrl} target="_blank">
+          View Solana payment instructions
+        </a>
+      {/if}
       <label class="payload-field">
         <span>Payment payload</span>
         <textarea
@@ -833,6 +921,19 @@
   .action:focus-visible {
     outline: 3px solid rgba(59, 130, 246, 0.65);
     outline-offset: 2px;
+  }
+
+  .secondary-link {
+    display: inline-flex;
+    margin-top: 0.75rem;
+    color: #1d4ed8;
+    font-weight: 600;
+    text-decoration: none;
+  }
+
+  .secondary-link:hover,
+  .secondary-link:focus-visible {
+    text-decoration: underline;
   }
 
   .payload-field {
