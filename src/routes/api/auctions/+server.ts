@@ -1,0 +1,73 @@
+import { json } from '@sveltejs/kit';
+import type { RequestHandler } from './$types';
+import { db } from '$lib/server/db';
+import { X402Middleware } from '$lib/server/x402';
+import { TelegramBot } from '$lib/server/telegram';
+import { TELEGRAM_BOT_TOKEN, RECEIVER_ADDRESS } from '$env/static/private';
+
+const x402 = new X402Middleware(RECEIVER_ADDRESS || '0xDemo');
+const telegramBot = TELEGRAM_BOT_TOKEN ? new TelegramBot(TELEGRAM_BOT_TOKEN) : null;
+
+export const GET: RequestHandler = async ({ url }) => {
+  const groupId = url.searchParams.get('groupId');
+  
+  if (groupId) {
+    const auctions = db.getAllAuctions().filter(a => a.groupId === parseInt(groupId));
+    return json(auctions);
+  }
+  
+  return json(db.getAllAuctions());
+};
+
+export const POST: RequestHandler = async ({ request }) => {
+  try {
+    const payment = await x402.verifyPayment(request);
+    const data = await request.json();
+    
+    const group = db.getGroup(data.groupId);
+    if (!group) {
+      return json({ error: 'Group not found' }, { status: 404 });
+    }
+
+    // Check payment
+    if (!payment || payment.amount < group.minBid) {
+      return x402.create402Response(group.minBid, group.ownerAddress);
+    }
+
+    // Create auction
+    const auction = db.createAuction({
+      groupId: data.groupId,
+      bidderAddress: payment.sender,
+      bidderName: data.bidderName || 'Anonymous AI',
+      amount: payment.amount,
+      message: data.message,
+      txHash: payment.txHash
+    });
+
+    // Update group stats
+    db.updateGroup(group.id, {
+      totalEarned: group.totalEarned + payment.amount,
+      messageCount: group.messageCount + 1
+    });
+
+    // Post to Telegram
+    if (telegramBot && group.telegramId) {
+      try {
+        const messageText = telegramBot.formatAuctionMessage(auction);
+        await telegramBot.sendMessage(group.telegramId, messageText);
+        
+        db.updateAuction(auction.id, { 
+          status: 'active',
+          postedAt: new Date() 
+        });
+      } catch (error) {
+        console.error('Failed to post to Telegram:', error);
+      }
+    }
+
+    return json(auction, { status: 201 });
+  } catch (error) {
+    console.error('Auction creation error:', error);
+    return json({ error: 'Failed to create auction' }, { status: 500 });
+  }
+};
