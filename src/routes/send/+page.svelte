@@ -7,6 +7,14 @@
     recipient: string;
     network?: string;
     instructions?: string;
+    facilitator?: string;
+    accepts?: Array<{
+      scheme?: string;
+      networkId?: string;
+      currencyCode?: string;
+      amount?: number;
+      recipient?: string;
+    }>;
   }
 
   export let data: {
@@ -80,6 +88,10 @@
 
     if (note) {
       url.searchParams.set('memo', note);
+    }
+
+    if (request.facilitator) {
+      url.searchParams.set('facilitator', request.facilitator);
     }
 
     return url.toString();
@@ -261,6 +273,9 @@
       {/if}
       {#if paymentRequest.instructions}
         <p class="footnote">{paymentRequest.instructions}</p>
+      {/if}
+      {#if paymentRequest.facilitator}
+        <p class="footnote">Payments are verified via {paymentRequest.facilitator}.</p>
       {/if}
     </section>
   {/if}

@@ -4,6 +4,27 @@ const AMOUNT_HEADERS = ['x-402-amount', 'x-payment-amount'];
 const SENDER_HEADERS = ['x-402-sender', 'x-payment-sender'];
 const TX_HASH_HEADERS = ['x-402-tx-hash', 'x-payment-txhash'];
 const NETWORK_HEADERS = ['x-402-network', 'x-payment-network'];
+const PAYMENT_PAYLOAD_HEADER = 'x-payment';
+const DEFAULT_FACILITATOR_URL = 'https://facilitator.payai.network';
+
+interface PaymentValidationOptions {
+  facilitatorUrl?: string | null;
+  paymentDetails?: {
+    amount: number;
+    currency: string;
+    recipient: string;
+    network: string;
+  };
+}
+
+interface FacilitatorVerificationResult {
+  valid: boolean;
+  amount: number;
+  currency: string;
+  sender: string;
+  network: string | null;
+  txHash: string | null;
+}
 
 function readHeader(request: Request, keys: string[]): string | null {
   for (const key of keys) {
@@ -15,7 +36,11 @@ function readHeader(request: Request, keys: string[]): string | null {
   return null;
 }
 
-export function parsePayment(request: Request): PaymentDetails | null {
+function normalizeFacilitatorUrl(url: string): string {
+  return url.endsWith('/') ? url.slice(0, -1) : url;
+}
+
+function parseLegacyHeaders(request: Request): PaymentDetails | null {
   const amountHeader = readHeader(request, AMOUNT_HEADERS);
   const senderHeader = readHeader(request, SENDER_HEADERS);
 
@@ -40,26 +65,244 @@ export function parsePayment(request: Request): PaymentDetails | null {
   };
 }
 
-export function buildPaymentRequiredResponse(requiredAmount: number, receiverAddress: string): Response {
-  return new Response(
-    JSON.stringify({
-      error: 'Payment Required',
-      amount: requiredAmount,
-      currency: 'USDC',
-      recipient: receiverAddress,
-      network: 'solana',
-      instructions: 'Resubmit the request with x-402 headers after transferring USDC on Solana.'
-    }),
-    {
-      status: 402,
-      headers: {
-        'content-type': 'application/json',
-        'x-payment-required': 'true',
-        'x-payment-amount': requiredAmount.toString(),
-        'x-payment-currency': 'USDC',
-        'x-payment-recipient': receiverAddress,
-        'x-payment-network': 'solana'
+function extractSender(payload: Record<string, unknown>): string | null {
+  const candidateKeys = ['payer', 'sender', 'payerAddress', 'owner', 'from'];
+  for (const key of candidateKeys) {
+    const value = payload[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value;
+    }
+  }
+
+  const nested = payload.payment;
+  if (nested && typeof nested === 'object') {
+    for (const key of candidateKeys) {
+      const value = (nested as Record<string, unknown>)[key];
+      if (typeof value === 'string' && value.trim()) {
+        return value;
       }
     }
-  );
+  }
+  return null;
+}
+
+function extractTxHash(payload: Record<string, unknown>): string | null {
+  const candidateKeys = ['txHash', 'transactionSignature', 'signature', 'hash'];
+  for (const key of candidateKeys) {
+    const value = payload[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value;
+    }
+  }
+
+  const nested = payload.payment;
+  if (nested && typeof nested === 'object') {
+    for (const key of candidateKeys) {
+      const value = (nested as Record<string, unknown>)[key];
+      if (typeof value === 'string' && value.trim()) {
+        return value;
+      }
+    }
+  }
+  return null;
+}
+
+function extractNetwork(payload: Record<string, unknown>, fallback: string): string {
+  const candidateKeys = ['network', 'networkId'];
+  for (const key of candidateKeys) {
+    const value = payload[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value;
+    }
+  }
+
+  const nested = payload.payment;
+  if (nested && typeof nested === 'object') {
+    for (const key of candidateKeys) {
+      const value = (nested as Record<string, unknown>)[key];
+      if (typeof value === 'string' && value.trim()) {
+        return value;
+      }
+    }
+  }
+  return fallback;
+}
+
+function extractCurrency(payload: Record<string, unknown>, fallback: string): string {
+  const candidateKeys = ['currency', 'currencyCode'];
+  for (const key of candidateKeys) {
+    const value = payload[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value;
+    }
+  }
+
+  const nested = payload.payment;
+  if (nested && typeof nested === 'object') {
+    for (const key of candidateKeys) {
+      const value = (nested as Record<string, unknown>)[key];
+      if (typeof value === 'string' && value.trim()) {
+        return value;
+      }
+    }
+  }
+  return fallback;
+}
+
+async function verifyWithFacilitator(
+  encodedPayload: string,
+  options: Required<PaymentValidationOptions>['paymentDetails'],
+  facilitatorUrl: string
+): Promise<FacilitatorVerificationResult | null> {
+  try {
+    const endpoint = `${normalizeFacilitatorUrl(facilitatorUrl)}/verify`;
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        paymentPayload: encodedPayload,
+        paymentDetails: {
+          amount: options.amount,
+          currencyCode: options.currency,
+          recipient: options.recipient,
+          networkId: options.network
+        }
+      })
+    });
+
+    if (!response.ok) {
+      console.warn('Facilitator verify request failed', response.status, await response.text());
+      return null;
+    }
+
+    const payload = (await response.json()) as Record<string, unknown> | null;
+    if (!payload || payload.error) {
+      return null;
+    }
+
+    const isValid =
+      payload.valid === true ||
+      payload.status === 'confirmed' ||
+      payload.status === 'settled' ||
+      payload.state === 'verified' ||
+      (typeof payload.valid === 'undefined' && !('invalid' in payload));
+
+    if (!isValid) {
+      return null;
+    }
+
+    const amountCandidates = [payload.amount, payload.amountReceived, payload.value, payload.paymentAmount];
+    const nestedPayment = payload.payment;
+    if (nestedPayment && typeof nestedPayment === 'object') {
+      const nested = nestedPayment as Record<string, unknown>;
+      amountCandidates.push(nested.amount, nested.value, nested.amountReceived);
+    }
+    let resolvedAmount = Number.NaN;
+    for (const candidate of amountCandidates) {
+      if (typeof candidate === 'number') {
+        resolvedAmount = candidate;
+        break;
+      }
+      if (typeof candidate === 'string' && candidate.trim()) {
+        const parsed = Number.parseFloat(candidate);
+        if (!Number.isNaN(parsed)) {
+          resolvedAmount = parsed;
+          break;
+        }
+      }
+    }
+
+    if (Number.isNaN(resolvedAmount)) {
+      resolvedAmount = options.amount;
+    }
+
+    const sender = extractSender(payload) ?? 'unknown';
+    const txHash = extractTxHash(payload);
+    const network = extractNetwork(payload, options.network);
+    const currency = extractCurrency(payload, options.currency);
+
+    return {
+      valid: true,
+      amount: resolvedAmount,
+      currency,
+      sender,
+      network,
+      txHash: txHash ?? null
+    };
+  } catch (error) {
+    console.error('Failed to verify payment with facilitator', error);
+    return null;
+  }
+}
+
+export async function parsePayment(
+  request: Request,
+  options?: PaymentValidationOptions
+): Promise<PaymentDetails | null> {
+  const legacy = parseLegacyHeaders(request);
+  if (legacy) {
+    return legacy;
+  }
+
+  const encodedPayload = request.headers.get(PAYMENT_PAYLOAD_HEADER);
+  if (!encodedPayload || !options?.paymentDetails) {
+    return null;
+  }
+
+  const facilitatorUrl = options.facilitatorUrl ?? DEFAULT_FACILITATOR_URL;
+  const result = await verifyWithFacilitator(encodedPayload, options.paymentDetails, facilitatorUrl);
+  if (!result) {
+    return null;
+  }
+
+  return {
+    amount: result.amount,
+    sender: result.sender,
+    txHash: result.txHash,
+    currency: typeof result.currency === 'string' ? result.currency.toUpperCase() : result.currency,
+    network: result.network
+  };
+}
+
+export function buildPaymentRequiredResponse(
+  requiredAmount: number,
+  receiverAddress: string,
+  facilitatorUrl?: string | null
+): Response {
+  const normalizedFacilitator = facilitatorUrl ? normalizeFacilitatorUrl(facilitatorUrl) : DEFAULT_FACILITATOR_URL;
+  const network = 'solana';
+  const currency = 'USDC';
+
+  const body = {
+    error: 'Payment Required',
+    amount: requiredAmount,
+    currency,
+    recipient: receiverAddress,
+    network,
+    facilitator: normalizedFacilitator,
+    instructions:
+      'Resubmit the request with the X-PAYMENT header after funding the transfer using an x402 facilitator.',
+    accepts: [
+      {
+        scheme: 'onchain-transfer',
+        networkId: network,
+        currencyCode: currency,
+        amount: requiredAmount,
+        recipient: receiverAddress
+      }
+    ]
+  };
+
+  return new Response(JSON.stringify(body), {
+    status: 402,
+    headers: {
+      'content-type': 'application/json',
+      'x-payment-required': 'true',
+      'x-payment-amount': requiredAmount.toString(),
+      'x-payment-currency': currency,
+      'x-payment-recipient': receiverAddress,
+      'x-payment-network': network,
+      'x-payment-facilitator': normalizedFacilitator
+    }
+  });
 }
