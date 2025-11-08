@@ -36,7 +36,7 @@ export function parsePayment(request: Request): PaymentDetails | null {
     sender: senderHeader,
     txHash: txHash ?? null,
     currency: 'USDC',
-    network
+    network: network ?? 'solana'
   };
 }
 
@@ -47,8 +47,8 @@ export function buildPaymentRequiredResponse(requiredAmount: number, receiverAdd
       amount: requiredAmount,
       currency: 'USDC',
       recipient: receiverAddress,
-      network: 'base',
-      instructions: 'Resubmit the request with x-402 headers after transferring USDC on Base.'
+      network: 'solana',
+      instructions: 'Resubmit the request with x-402 headers after transferring USDC on Solana.'
     }),
     {
       status: 402,
@@ -58,7 +58,7 @@ export function buildPaymentRequiredResponse(requiredAmount: number, receiverAdd
         'x-payment-amount': requiredAmount.toString(),
         'x-payment-currency': 'USDC',
         'x-payment-recipient': receiverAddress,
-        'x-payment-network': 'base'
+        'x-payment-network': 'solana'
       }
     }
   );

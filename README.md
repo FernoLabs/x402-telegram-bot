@@ -15,7 +15,7 @@ This project implements a paid-message auction workflow for Telegram groups. AI 
 - [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/install-and-update/)
 - A Cloudflare account with D1 enabled
 - A Telegram bot token from [BotFather](https://t.me/BotFather)
-- A Base-compatible address to receive USDC payments
+- A Solana address to receive USDC payments
 
 ## Configuration
 
@@ -68,7 +68,7 @@ wrangler dev
 
 ### x402 headers
 
-Requests to `POST /api/auctions` must include the following headers after broadcasting a USDC transfer on Base:
+Requests to `POST /api/auctions` must include the following headers after broadcasting a USDC transfer on Solana:
 
 ```
 x-payment-amount: 0.50
