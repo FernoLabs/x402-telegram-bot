@@ -20,16 +20,10 @@
 	"migrations_dir": "migrations",
 	"d1_databases": [
 		{
-			"binding": "DB",
-			"database_name": "x402-auction-db",
-			"database_id": "00000000-0000-0000-0000-000000000000",
-			"preview_database_id": "00000000-0000-0000-0000-000000000000"
-		},
-		{
 			"binding": "x402_auction_db",
 			"database_name": "x402-auction-db",
 			"database_id": "c7203407-91b0-4830-8079-394f5d8e436e"
 		}
 	],
-   "vars": { "TELEGRAM_WEBHOOK_URL": "https://x402-telegram-bot.pages.devapi/telegram/webhook" }
+   "vars": { "TELEGRAM_WEBHOOK_URL": "https://x402-tg-auction-bot.cheron-augustin.workers.dev/api/telegram/webhook" }
 }
