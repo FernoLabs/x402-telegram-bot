@@ -85,8 +85,27 @@
     return url.toString();
   }
 
+  const parseSelectedGroupId = (value: string): number | null => {
+    if (!value) {
+      return null;
+    }
+
+    const parsed = Number.parseInt(value, 10);
+    return Number.isNaN(parsed) ? null : parsed;
+  };
+
+  const findSelectedGroup = (value: string): Group | null => {
+    const parsedId = parseSelectedGroupId(value);
+
+    if (parsedId === null) {
+      return null;
+    }
+
+    return activeGroups.find((group) => group.id === parsedId) ?? null;
+  };
+
   async function requestPayment(): Promise<void> {
-    const selectedGroup = activeGroups.find((group) => String(group.id) === selectedGroupId) ?? null;
+    const selectedGroup = findSelectedGroup(selectedGroupId);
 
     if (!selectedGroup) {
       error = 'Select a group before sending a message.';
@@ -148,7 +167,7 @@
     }
   }
 
-  $: selectedGroup = activeGroups.find((group) => String(group.id) === selectedGroupId) ?? null;
+  $: selectedGroup = findSelectedGroup(selectedGroupId);
   $: minimumBid = selectedGroup ? formatUsd(selectedGroup.minBid) : null;
   $: paymentUrl = paymentRequest
     ? buildPaymentUrl(paymentRequest, selectedGroup, message.trim())
