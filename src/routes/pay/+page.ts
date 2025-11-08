@@ -36,6 +36,11 @@ export const load: PageLoad = ({ url }) => {
   const network = sanitize(url.searchParams.get('network')) ?? 'Solana';
   const group = sanitize(url.searchParams.get('group'));
   const memo = sanitize(url.searchParams.get('memo'));
+  const checkout = sanitize(url.searchParams.get('checkout'));
+  const facilitator = sanitize(url.searchParams.get('facilitator'));
+  const paymentId = sanitize(url.searchParams.get('paymentId'));
+  const nonce = sanitize(url.searchParams.get('nonce'));
+  const expiresAt = sanitize(url.searchParams.get('expiresAt'));
 
   return {
     payment: {
@@ -44,7 +49,12 @@ export const load: PageLoad = ({ url }) => {
       currency,
       network,
       group,
-      memo
+      memo,
+      checkout,
+      facilitator,
+      paymentId,
+      nonce,
+      expiresAt
     }
   };
 };

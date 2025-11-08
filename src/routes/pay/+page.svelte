@@ -15,6 +15,59 @@
 
     return `${amount.toFixed(2)} ${currency}`;
   };
+
+  const formatExpiration = (value: string | null) => {
+    if (!value) {
+      return null;
+    }
+
+    const timestamp = Date.parse(value);
+    if (Number.isNaN(timestamp)) {
+      return null;
+    }
+
+    return new Date(timestamp).toLocaleString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  const buildFallbackCheckoutUrl = () => {
+    const url = new URL('https://payai.network/pay');
+    url.searchParams.set('amount', data.payment.amount.toString());
+    url.searchParams.set('recipient', data.payment.recipient);
+    url.searchParams.set('currency', data.payment.currency);
+    url.searchParams.set('network', data.payment.network);
+
+    if (data.payment.group) {
+      url.searchParams.set('group', data.payment.group);
+    }
+
+    if (data.payment.memo) {
+      url.searchParams.set('memo', data.payment.memo);
+    }
+
+    if (data.payment.facilitator) {
+      url.searchParams.set('facilitator', data.payment.facilitator);
+    }
+
+    if (data.payment.paymentId) {
+      url.searchParams.set('paymentId', data.payment.paymentId);
+    }
+
+    if (data.payment.nonce) {
+      url.searchParams.set('nonce', data.payment.nonce);
+    }
+
+    return url.toString();
+  };
+
+  $: checkoutUrl = data.payment.checkout ?? buildFallbackCheckoutUrl();
+  $: facilitatorUrl = data.payment.facilitator ?? null;
+  $: expiresAtDisplay = formatExpiration(data.payment.expiresAt ?? null);
 </script>
 
 <svelte:head>
@@ -35,6 +88,14 @@
     {#if data.payment.group}
       <p class="group-note">Payment requested for <strong>{data.payment.group}</strong>.</p>
     {/if}
+    <div class="checkout">
+      <a class="checkout-button" href={checkoutUrl} rel="noreferrer" target="_blank"
+        >Open x402 checkout</a
+      >
+      <p class="checkout-hint">
+        This opens the hosted x402 facilitator so you can approve the USDC transfer from your Solana wallet.
+      </p>
+    </div>
   </header>
 
   <section class="details">
@@ -62,19 +123,53 @@
           <dd>{data.payment.memo}</dd>
         </div>
       {/if}
+      {#if data.payment.paymentId}
+        <div>
+          <dt>Payment ID</dt>
+          <dd><code>{data.payment.paymentId}</code></dd>
+        </div>
+      {/if}
+      {#if data.payment.nonce}
+        <div>
+          <dt>Nonce</dt>
+          <dd><code>{data.payment.nonce}</code></dd>
+        </div>
+      {/if}
+      {#if facilitatorUrl}
+        <div>
+          <dt>Facilitator</dt>
+          <dd><a href={facilitatorUrl} target="_blank" rel="noreferrer">{facilitatorUrl}</a></dd>
+        </div>
+      {/if}
+      {#if expiresAtDisplay}
+        <div>
+          <dt>Payment window expires</dt>
+          <dd>{expiresAtDisplay}</dd>
+        </div>
+      {/if}
     </dl>
   </section>
 
   <section class="steps">
     <h3>How to pay</h3>
     <ol>
-      <li>Open your Solana wallet that supports sending USDC.</li>
-      <li>Send the amount above to the recipient address with the memo if required.</li>
-      <li>Submit the transaction on Solana and wait for confirmation.</li>
+      <li>
+        Click <strong>Open x402 checkout</strong> to launch the hosted facilitator. It will load the payment
+        payload for this request.
+      </li>
+      <li>
+        Approve the USDC transfer from your Solana wallet (e.g. Phantom). The facilitator will broadcast the
+        transaction and share the encoded payment payload with this app, following the x402 flow described in
+        the QuickNode guide.
+      </li>
+      <li>
+        Once the transaction confirms, return to the previous tab and submit the payment payload so the bot
+        can post your message.
+      </li>
     </ol>
     <p class="footnote">
-      Once the payment confirms on-chain, x402 will automatically process the request and notify the
-      bot.
+      Once the payment confirms on-chain, the facilitator reports success via x402 and this bot can publish
+      your announcement automatically.
     </p>
   </section>
 </article>
@@ -117,6 +212,38 @@
     border-radius: 0.4rem;
     font-size: 0.95rem;
     word-break: break-all;
+  }
+
+  .checkout {
+    margin-top: 1.5rem;
+    display: grid;
+    gap: 0.5rem;
+    align-items: start;
+  }
+
+  .checkout-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    background: #1d4ed8;
+    color: white;
+    padding: 0.75rem 1.5rem;
+    border-radius: 999px;
+    font-weight: 600;
+    text-decoration: none;
+    transition: background 0.2s ease;
+  }
+
+  .checkout-button:hover,
+  .checkout-button:focus-visible {
+    background: #1e40af;
+  }
+
+  .checkout-hint {
+    color: #475569;
+    margin: 0;
+    font-size: 0.95rem;
   }
 
   .details {
@@ -183,6 +310,10 @@
     .details,
     .steps {
       border-radius: 0.85rem;
+    }
+
+    .checkout-button {
+      width: 100%;
     }
   }
 </style>
