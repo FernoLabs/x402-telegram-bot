@@ -17,7 +17,6 @@
 	"observability": {
 		"enabled": true
 	},
-	"migrations_dir": "migrations",
 	"d1_databases": [
 		{
 			"binding": "x402_auction_db",
