@@ -78,9 +78,10 @@ x-payment-txhash: 0xtransactionhash
 
 The worker returns an HTTP 402 response with the recipient address and amount when additional payment is required.
 
-Responses now follow the [x402 facilitator](https://docs.payai.network/x402) format and include an `accepts` array, plus the `x-payment`
-header metadata clients need to construct a Payment Payload. Set the `FACILITATOR_URL` environment variable (defaults to the PayAI
-facilitator) to verify payments via `/verify` before the bot posts messages.
+Responses now follow the [x402 facilitator](https://docs.payai.network/x402) format and include an `accepts` array, a `checkoutUrl`
+that deep-links to the hosted payer experience (`https://www.x402.org/pay?...&facilitator=...`), plus the `x-payment` header metadata
+clients need to construct a Payment Payload. Set the `FACILITATOR_URL` environment variable (defaults to the PayAI facilitator) to
+verify payments via `/verify` before the bot posts messages.
 
 ## Telegram webhook flow
 

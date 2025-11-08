@@ -8,12 +8,15 @@
     network?: string;
     instructions?: string;
     facilitator?: string;
+    checkoutUrl?: string;
     accepts?: Array<{
       scheme?: string;
       networkId?: string;
       currencyCode?: string;
       amount?: number;
       recipient?: string;
+      facilitator?: string;
+      url?: string;
     }>;
   }
 
@@ -182,7 +185,7 @@
   $: selectedGroup = findSelectedGroup(selectedGroupId);
   $: minimumBid = selectedGroup ? formatUsd(selectedGroup.minBid) : null;
   $: paymentUrl = paymentRequest
-    ? buildPaymentUrl(paymentRequest, selectedGroup, message.trim())
+    ? paymentRequest.checkoutUrl ?? buildPaymentUrl(paymentRequest, selectedGroup, message.trim())
     : null;
 </script>
 
