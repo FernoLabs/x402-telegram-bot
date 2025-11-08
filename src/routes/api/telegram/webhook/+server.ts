@@ -94,6 +94,16 @@ async function handleGroupConfigCommand(
   }
 
   const chatId = String(message.chat.id);
+  const alternateIdentifiers: string[] = [];
+
+  const chatUsername = message.chat.username;
+  if (chatUsername) {
+    const normalizedUsername = normalizeHandle(chatUsername);
+    if (normalizedUsername) {
+      alternateIdentifiers.push(chatUsername, normalizedUsername, `@${normalizedUsername}`);
+    }
+  }
+
   const fromId = message.from?.id ? String(message.from.id) : null;
   if (!fromId) {
     return true;
@@ -117,19 +127,51 @@ async function handleGroupConfigCommand(
     return true;
   }
 
-  const group = await repo.getGroupByTelegramId(chatId);
+  const walletAddress = normalizedCommand === '/setwallet' ? args.join(' ').trim() : '';
+
+  const group = await repo.getGroupByTelegramId(chatId, alternateIdentifiers);
 
   if (!group) {
+    if (normalizedCommand === '/setwallet') {
+      if (!walletAddress) {
+        await bot.sendMessage({
+          chat_id: chatId,
+          text: 'Please include the Solana wallet address, for example: /setwallet 8Gh...xyz',
+          reply_to_message_id: message.message_id
+        });
+        return true;
+      }
+
+      const defaultMinBid = 1;
+      const groupName = message.chat.title?.trim() ||
+        (message.chat.username ? `@${message.chat.username}` : `Chat ${chatId}`);
+
+      await repo.createGroup({
+        name: groupName,
+        telegramId: chatId,
+        minBid: defaultMinBid,
+        ownerAddress: walletAddress
+      });
+
+      await bot.sendMessage({
+        chat_id: chatId,
+        text: `Registered this chat with x402 and set the payout wallet to:\n<code>${walletAddress}</code>\n\nCurrent price per message: ${defaultMinBid.toFixed(2)} USDC\nUse /setprice to change it.`,
+        parse_mode: 'HTML',
+        reply_to_message_id: message.message_id
+      });
+
+      return true;
+    }
+
     await bot.sendMessage({
       chat_id: chatId,
-      text: 'This chat is not registered with x402 yet. Visit the setup guide to create it first.',
+      text: 'This chat is not registered with x402 yet. Use /setwallet first to register it.',
       reply_to_message_id: message.message_id
     });
     return true;
   }
 
   if (normalizedCommand === '/setwallet') {
-    const walletAddress = args.join(' ').trim();
     if (!walletAddress) {
       await bot.sendMessage({
         chat_id: chatId,
@@ -139,7 +181,7 @@ async function handleGroupConfigCommand(
       return true;
     }
 
-    const updated = await repo.updateGroupConfig(chatId, { ownerAddress: walletAddress });
+    const updated = await repo.updateGroupConfig(group.telegramId, { ownerAddress: walletAddress });
     if (updated) {
       await bot.sendMessage({
         chat_id: chatId,
@@ -165,7 +207,7 @@ async function handleGroupConfigCommand(
       return true;
     }
 
-    const updated = await repo.updateGroupConfig(chatId, { minBid: parsedAmount });
+    const updated = await repo.updateGroupConfig(group.telegramId, { minBid: parsedAmount });
     if (updated) {
       await bot.sendMessage({
         chat_id: chatId,
