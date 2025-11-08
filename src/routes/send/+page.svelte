@@ -1,29 +1,5 @@
 <script lang="ts">
-  import { browser } from '$app/environment';
-  import { onDestroy, onMount } from 'svelte';
   import type { Auction, Group } from '$lib/types';
-  import {
-    LAMPORTS_PER_SOL,
-    PublicKey,
-    SystemProgram,
-    Transaction,
-    TransactionInstruction
-  } from '@solana/web3.js';
-  import {
-    createAssociatedTokenAccountInstruction,
-    createTransferInstruction,
-    getAssociatedTokenAddress
-  } from '@solana/spl-token';
-  import { Buffer } from 'buffer';
-  import type { WalletAdapter, WalletError } from '@solana/wallet-adapter-base';
-  import { WalletReadyState } from '@solana/wallet-adapter-base';
-  import {
-    CoinbaseWalletAdapter,
-    PhantomWalletAdapter,
-    SolflareWalletAdapter,
-    TorusWalletAdapter,
-    TrustWalletAdapter
-  } from '@solana/wallet-adapter-wallets';
 
   interface PaymentAcceptOption {
     scheme?: string;
@@ -56,6 +32,8 @@
     assetType?: string;
     paymentId?: string;
     nonce?: string;
+    checkout?: string;
+    facilitator?: string;
   }
 
   interface PendingPaymentRequest extends PaymentRequestData {
@@ -63,14 +41,7 @@
     createdAt: number;
   }
 
-  interface WalletEntry {
-    name: string;
-    adapter: WalletAdapter;
-    readyState: WalletReadyState;
-    url?: string | null;
-  }
-
-  const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
+  const DEFAULT_FACILITATOR_URL = 'https://facilitator.payai.network/pay';
 
   export let data: {
     groups: Group[];
@@ -106,18 +77,6 @@
   let activePaymentId: string | null = null;
   let signatureInputs: Record<string, string> = {};
   let signatureErrors: Record<string, string | undefined> = {};
-  let paymentInFlight: Record<string, boolean> = {};
-
-  const mintDecimalsCache = new Map<string, number>();
-
-  let availableWallets: WalletEntry[] = [];
-  let wallet: WalletAdapter | null = null;
-  let selectedWalletName: string | null = null;
-  let walletAddress: string | null = null;
-  let walletConnecting = false;
-  let walletError: string | null = null;
-  const walletListeners: Array<() => void> = [];
-
   const formatUsd = (value: number) => currencyFormatter.format(value);
 
   const formatAmountForCurrency = (value: number, currency: string): string => {
@@ -285,6 +244,57 @@
     return null;
   };
 
+  const buildHostedCheckoutUrl = (request: PaymentRequestData): string | null => {
+    const amount = resolveAmount(request);
+    const recipient = resolveRecipient(request);
+
+    if (amount === null || !recipient) {
+      return null;
+    }
+
+    const currency = resolveCurrency(request) ?? 'USDC';
+    const network = resolveNetwork(request) ?? 'Solana';
+    const memo = resolveMemo(request);
+    const checkout = resolveStringField([request.checkout]);
+    const facilitator = resolveStringField([request.facilitator]) ?? DEFAULT_FACILITATOR_URL;
+    const params = new URLSearchParams();
+
+    params.set('amount', amount.toString());
+    params.set('recipient', recipient);
+    params.set('currency', currency);
+    params.set('network', network);
+
+    if (request.groupName) {
+      params.set('group', request.groupName);
+    }
+
+    if (memo) {
+      params.set('memo', memo);
+    }
+
+    if (request.paymentId) {
+      params.set('paymentId', request.paymentId);
+    }
+
+    if (request.nonce) {
+      params.set('nonce', request.nonce);
+    }
+
+    if (request.expiresAt) {
+      params.set('expiresAt', request.expiresAt);
+    }
+
+    if (checkout) {
+      params.set('checkout', checkout);
+    }
+
+    if (facilitator) {
+      params.set('facilitator', facilitator);
+    }
+
+    return `/pay?${params.toString()}`;
+  };
+
   const parseSelectedGroupId = (value: string): number | null => {
     if (!value) {
       return null;
@@ -342,9 +352,6 @@
     signatureInputs = restSignatures;
     const { [id]: _removedError, ...restErrors } = signatureErrors;
     signatureErrors = restErrors;
-    const { [id]: _removedFlight, ...restFlights } = paymentInFlight;
-    paymentInFlight = restFlights;
-
     if (pendingPayments.length === 0) {
       activePaymentId = null;
     } else if (!activePaymentId || !pendingPayments.some((item) => item.internalId === activePaymentId)) {
@@ -357,7 +364,6 @@
     activePaymentId = null;
     signatureInputs = {};
     signatureErrors = {};
-    paymentInFlight = {};
   }
 
   function updateSignatureForActive(value: string): void {
@@ -367,376 +373,6 @@
     signatureInputs = { ...signatureInputs, [activePaymentId]: value };
     const { [activePaymentId]: _removed, ...rest } = signatureErrors;
     signatureErrors = rest;
-  }
-
-  function handleWalletSelection(event: Event): void {
-    const target = event.target as HTMLSelectElement;
-    selectWallet(target.value);
-  }
-
-  function shortenAddress(address: string): string {
-    if (address.length <= 10) {
-      return address;
-    }
-    return `${address.slice(0, 4)}…${address.slice(-4)}`;
-  }
-
-  function formatWalletError(err: unknown): string {
-    if (err instanceof Error) {
-      return err.message;
-    }
-    if (typeof err === 'string') {
-      return err;
-    }
-    return 'Wallet error. Try again or pick a different wallet.';
-  }
-
-  function registerAdapter(adapter: WalletAdapter): WalletEntry | null {
-    if (adapter.readyState === WalletReadyState.Unsupported) {
-      return null;
-    }
-
-    const entry: WalletEntry = {
-      name: adapter.name,
-      adapter,
-      readyState: adapter.readyState,
-      url: 'url' in adapter ? ((adapter as { url?: string | null }).url ?? null) : null
-    };
-
-    const handleConnect = () => {
-      if (wallet === adapter) {
-        walletAddress = adapter.publicKey ? adapter.publicKey.toBase58() : null;
-      }
-      walletError = null;
-    };
-
-    const handleDisconnect = () => {
-      if (wallet === adapter) {
-        walletAddress = null;
-      }
-    };
-
-    const handleError = (event: WalletError) => {
-      walletError = formatWalletError(event);
-    };
-
-    const handleReadyStateChange = (state: WalletReadyState) => {
-      availableWallets = availableWallets.map((item) =>
-        item.name === entry.name ? { ...item, readyState: state } : item
-      );
-    };
-
-    adapter.on('connect', handleConnect);
-    adapter.on('disconnect', handleDisconnect);
-    adapter.on('error', handleError);
-    adapter.on('readyStateChange', handleReadyStateChange);
-
-    walletListeners.push(() => {
-      adapter.off('connect', handleConnect);
-      adapter.off('disconnect', handleDisconnect);
-      adapter.off('error', handleError);
-      adapter.off('readyStateChange', handleReadyStateChange);
-    });
-
-    if (adapter.connected && adapter.publicKey) {
-      walletAddress = adapter.publicKey.toBase58();
-    }
-
-    return entry;
-  }
-
-  function selectWallet(name: string | null): void {
-    if (!name) {
-      wallet = null;
-      selectedWalletName = null;
-      walletAddress = null;
-      return;
-    }
-
-    const entry = availableWallets.find((item) => item.name === name);
-    if (!entry) {
-      wallet = null;
-      selectedWalletName = null;
-      walletAddress = null;
-      return;
-    }
-
-    if (wallet && wallet !== entry.adapter && wallet.connected) {
-      wallet.disconnect().catch(() => {
-        /* ignore */
-      });
-    }
-
-    wallet = entry.adapter;
-    selectedWalletName = name;
-    walletError = null;
-
-    if (wallet.connected && wallet.publicKey) {
-      walletAddress = wallet.publicKey.toBase58();
-    } else if (!wallet.connected) {
-      walletAddress = null;
-    }
-  }
-
-  async function connectSelectedWallet(): Promise<void> {
-    if (!wallet) {
-      walletError = 'Select a wallet before connecting.';
-      return;
-    }
-
-    const entry = selectedWalletName
-      ? availableWallets.find((item) => item.name === selectedWalletName)
-      : null;
-
-    if (!entry) {
-      walletError = 'The selected wallet is no longer available.';
-      return;
-    }
-
-    if (entry.readyState === WalletReadyState.NotDetected) {
-      if (entry.url) {
-        window.open(entry.url, '_blank', 'noopener');
-        walletError = `Install ${entry.name} and reload this page.`;
-        return;
-      }
-      walletError = `${entry.name} wallet not detected. Install the extension and try again.`;
-      return;
-    }
-
-    walletConnecting = true;
-    walletError = null;
-
-    try {
-      await wallet.connect();
-      walletAddress = wallet.publicKey ? wallet.publicKey.toBase58() : null;
-    } catch (connectError) {
-      walletError = formatWalletError(connectError);
-    } finally {
-      walletConnecting = false;
-    }
-  }
-
-  async function disconnectWallet(): Promise<void> {
-    if (!wallet) {
-      return;
-    }
-
-    try {
-      await wallet.disconnect();
-    } catch (disconnectError) {
-      console.warn('Failed to disconnect wallet', disconnectError);
-    } finally {
-      walletAddress = null;
-    }
-  }
-
-  async function fetchLatestSolanaBlockhash(): Promise<{
-    blockhash: string;
-    lastValidBlockHeight: number;
-  }> {
-    const payload = await fetchJsonOrThrow<{ blockhash?: string; lastValidBlockHeight?: number }>(
-      '/api/solana/blockhash',
-      'Failed to fetch the latest Solana blockhash from the server.'
-    );
-
-    if (!payload.blockhash || typeof payload.lastValidBlockHeight !== 'number') {
-      throw new Error('The blockhash response from the server was invalid.');
-    }
-
-    return {
-      blockhash: payload.blockhash,
-      lastValidBlockHeight: payload.lastValidBlockHeight
-    };
-  }
-
-  async function checkAccountExists(address: PublicKey): Promise<boolean> {
-    const payload = await fetchJsonOrThrow<{ exists?: boolean }>(
-      `/api/solana/account/${address.toBase58()}`,
-      'Failed to load account information from the server.'
-    );
-
-    return Boolean(payload.exists);
-  }
-
-  async function submitSignedTransaction(serialized: Uint8Array): Promise<string> {
-    const payload = await fetchJsonOrThrow<{ signature?: string }>(
-      '/api/solana/submit',
-      'Failed to submit the transaction through the server.',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ transaction: Buffer.from(serialized).toString('base64') })
-      }
-    );
-
-    if (!payload.signature) {
-      throw new Error('The server did not return a transaction signature.');
-    }
-
-    return payload.signature;
-  }
-
-  async function getTokenDecimals(mintAddress: PublicKey): Promise<number> {
-    const cacheKey = mintAddress.toBase58();
-    if (mintDecimalsCache.has(cacheKey)) {
-      return mintDecimalsCache.get(cacheKey) as number;
-    }
-
-    const payload = await fetchJsonOrThrow<{ mint: string; decimals: number }>(
-      `/api/solana/mint/${cacheKey}`,
-      'Failed to load token metadata from the server.'
-    );
-
-    if (typeof payload.decimals !== 'number' || Number.isNaN(payload.decimals)) {
-      throw new Error('The token metadata returned by the server was invalid.');
-    }
-
-    mintDecimalsCache.set(cacheKey, payload.decimals);
-    return payload.decimals;
-  }
-
-  const toBaseUnits = (amount: number, decimals: number): bigint => {
-    if (!Number.isFinite(amount) || amount <= 0) {
-      throw new Error('Payment amount must be greater than zero.');
-    }
-
-    const normalized = amount.toFixed(decimals);
-    const integer = normalized.replace('.', '').replace(/^0+/, '') || '0';
-    return BigInt(integer);
-  };
-
-  async function sendPaymentWithWallet(request: PendingPaymentRequest): Promise<void> {
-    if (!wallet || !wallet.publicKey) {
-      walletError = 'Connect a wallet before sending the payment.';
-      return;
-    }
-
-    const amount = resolveAmount(request);
-    const recipientAddress = resolveRecipient(request);
-    const network = resolveNetwork(request);
-
-    if (!amount || amount <= 0) {
-      signatureErrors = {
-        ...signatureErrors,
-        [request.internalId]: 'Payment amount was missing from the request.'
-      };
-      return;
-    }
-
-    if (!recipientAddress) {
-      signatureErrors = {
-        ...signatureErrors,
-        [request.internalId]: 'Payment recipient was missing from the request.'
-      };
-      return;
-    }
-
-    if (network && network.toLowerCase() !== 'solana') {
-      signatureErrors = {
-        ...signatureErrors,
-        [request.internalId]: `Wallet payments are only available for Solana requests. (${network})`
-      };
-      return;
-    }
-
-    paymentInFlight = { ...paymentInFlight, [request.internalId]: true };
-
-    try {
-      const payer = wallet.publicKey;
-      const recipient = new PublicKey(recipientAddress);
-      const transaction = new Transaction();
-      transaction.feePayer = payer;
-
-      const { blockhash, lastValidBlockHeight } = await fetchLatestSolanaBlockhash();
-      transaction.recentBlockhash = blockhash;
-      transaction.lastValidBlockHeight = lastValidBlockHeight;
-
-      const memo = resolveMemo(request);
-      const assetType = resolveStringField([request.assetType]);
-      const assetAddress = resolveStringField([request.assetAddress]);
-
-      if (assetType === 'spl-token' && assetAddress) {
-        const mint = new PublicKey(assetAddress);
-        const decimals = await getTokenDecimals(mint);
-        const transferAmount = toBaseUnits(amount, decimals);
-        const sourceTokenAccount = await getAssociatedTokenAddress(mint, payer);
-        const destinationTokenAccount = await getAssociatedTokenAddress(mint, recipient);
-
-        const sourceExists = await checkAccountExists(sourceTokenAccount);
-        if (!sourceExists) {
-          throw new Error('Your wallet does not hold the required token for this payment.');
-        }
-
-        const destinationExists = await checkAccountExists(destinationTokenAccount);
-        if (!destinationExists) {
-          transaction.add(
-            createAssociatedTokenAccountInstruction(
-              payer,
-              destinationTokenAccount,
-              recipient,
-              mint
-            )
-          );
-        }
-
-        transaction.add(
-          createTransferInstruction(
-            sourceTokenAccount,
-            destinationTokenAccount,
-            payer,
-            transferAmount
-          )
-        );
-      } else {
-        const lamports = amount * LAMPORTS_PER_SOL;
-        if (!Number.isFinite(lamports) || lamports <= 0) {
-          throw new Error('Payment amount must be greater than zero.');
-        }
-
-        transaction.add(
-          SystemProgram.transfer({
-            fromPubkey: payer,
-            toPubkey: recipient,
-            lamports: Math.round(lamports)
-          })
-        );
-      }
-
-      if (memo) {
-        transaction.add(
-          new TransactionInstruction({
-            keys: [],
-            programId: MEMO_PROGRAM_ID,
-            data: Buffer.from(memo, 'utf8')
-          })
-        );
-      }
-
-      const signTransaction = wallet.signTransaction?.bind(wallet);
-      if (!signTransaction) {
-        throw new Error('The selected wallet cannot sign transactions directly.');
-      }
-
-      const signedTransaction = await signTransaction(transaction);
-      const rawTransaction = signedTransaction.serialize();
-      const serializedBytes = rawTransaction instanceof Uint8Array ? rawTransaction : Uint8Array.from(rawTransaction);
-      const signature = await submitSignedTransaction(serializedBytes);
-
-      signatureInputs = { ...signatureInputs, [request.internalId]: signature };
-      const { [request.internalId]: _removedError, ...rest } = signatureErrors;
-      signatureErrors = rest;
-      activePaymentId = request.internalId;
-
-      await requestPayment();
-    } catch (sendError) {
-      console.error('Failed to send Solana payment', sendError);
-      signatureErrors = {
-        ...signatureErrors,
-        [request.internalId]: formatWalletError(sendError)
-      };
-    } finally {
-      paymentInFlight = { ...paymentInFlight, [request.internalId]: false };
-    }
   }
 
   async function requestPayment(): Promise<void> {
@@ -826,35 +462,6 @@
     }
   }
 
-  onMount(() => {
-    if (!browser) {
-      return;
-    }
-
-    const adapters = [
-      new PhantomWalletAdapter(),
-      new SolflareWalletAdapter(),
-      new CoinbaseWalletAdapter(),
-      new TrustWalletAdapter(),
-      new TorusWalletAdapter()
-    ];
-
-    availableWallets = adapters
-      .map((adapter) => registerAdapter(adapter))
-      .filter((entry): entry is WalletEntry => entry !== null);
-
-    if (availableWallets.length > 0) {
-      const installed = availableWallets.find((entry) => entry.readyState === WalletReadyState.Installed);
-      const initial = installed ?? availableWallets[0];
-      selectWallet(initial.name);
-    }
-  });
-
-  onDestroy(() => {
-    walletListeners.forEach((unsubscribe) => unsubscribe());
-    walletListeners.length = 0;
-  });
-
   $: selectedGroup = findSelectedGroup(selectedGroupId);
   $: minimumBid = selectedGroup ? formatUsd(selectedGroup.minBid) : null;
   $: {
@@ -877,17 +484,12 @@
   $: paymentRecipient = activePayment ? resolveRecipient(activePayment) : null;
   $: paymentMemo = activePayment ? resolveMemo(activePayment) : null;
   $: paymentInstructions = activePayment?.instructions ?? null;
+  $: hostedCheckoutLink = activePayment ? buildHostedCheckoutUrl(activePayment) : null;
   $: paymentExpirationDisplay =
     activePayment && activePayment.expiresAt ? formatExpiration(activePayment.expiresAt) : null;
   $: submitButtonLabel = pendingPayments.length > 0 ? 'Submit payment confirmation' : 'Generate payment instructions';
   $: currentSignatureValue = activePaymentId ? signatureInputs[activePaymentId] ?? '' : '';
   $: currentSignatureError = activePaymentId ? signatureErrors[activePaymentId] ?? null : null;
-  $: isPaymentSending = activePaymentId ? Boolean(paymentInFlight[activePaymentId]) : false;
-  $: selectedWalletEntry = selectedWalletName
-    ? availableWallets.find((entry) => entry.name === selectedWalletName) ?? null
-    : null;
-  $: canUseWalletForActivePayment =
-    !!activePayment && (!resolveNetwork(activePayment) || resolveNetwork(activePayment)?.toLowerCase() === 'solana');
 </script>
 
 <section class="page" aria-labelledby="send-title">
@@ -994,53 +596,24 @@
 
       <div class="payment-details">
         {#if activePayment}
-          <div class="wallet-panel">
-            <h4>Wallet connection</h4>
-            {#if walletAddress}
+          <div class="hosted-panel">
+            <h4>Hosted checkout</h4>
+            {#if hostedCheckoutLink}
               <p>
-                <strong>{shortenAddress(walletAddress)}</strong> connected.
+                Open the hosted facilitator in a new tab to complete this payment without connecting a browser wallet here.
               </p>
-              <div class="wallet-actions">
-                <button type="button" on:click={disconnectWallet} disabled={walletConnecting}>
-                  Disconnect
-                </button>
-              </div>
-            {:else if availableWallets.length > 0}
-              <label>
-                <span>Choose wallet</span>
-                <select bind:value={selectedWalletName} on:change={handleWalletSelection}>
-                  {#each availableWallets as entry (entry.name)}
-                    <option value={entry.name}>
-                      {entry.name}
-                      {#if entry.readyState === WalletReadyState.Installed}
-                        (installed)
-                      {:else if entry.readyState === WalletReadyState.Loadable}
-                        (loadable)
-                      {:else if entry.readyState === WalletReadyState.NotDetected}
-                        (not detected)
-                      {/if}
-                    </option>
-                  {/each}
-                </select>
-              </label>
-              <div class="wallet-actions">
-                <button type="button" on:click={connectSelectedWallet} disabled={walletConnecting}>
-                  {walletConnecting ? 'Connecting…' : 'Connect wallet'}
-                </button>
-                {#if selectedWalletEntry && selectedWalletEntry.readyState === WalletReadyState.NotDetected && selectedWalletEntry.url}
-                  <a class="install-link" href={selectedWalletEntry.url} target="_blank" rel="noreferrer">
-                    Install {selectedWalletEntry.name}
-                  </a>
-                {/if}
-              </div>
+              <a class="hosted-checkout" href={hostedCheckoutLink} target="_blank" rel="noreferrer">
+                Open hosted checkout
+              </a>
+              <p class="hosted-hint">
+                After confirming the transfer, copy the transaction signature back into this page before resubmitting the
+                form.
+              </p>
             {:else}
-              <p class="wallet-warning">
-                No compatible Solana wallets detected. Install Phantom, Solflare, Coinbase, Trust, or Torus, then reload this
-                page.
+              <p>
+                Use the instructions below to settle the transfer from your preferred Solana wallet, then paste the signature
+                here once it finalizes.
               </p>
-            {/if}
-            {#if walletError}
-              <p class="wallet-error">{walletError}</p>
             {/if}
           </div>
 
@@ -1068,25 +641,6 @@
             {#if paymentInstructions}
               <p>{paymentInstructions}</p>
             {/if}
-
-            <div class="cta-row">
-              <button
-                type="button"
-                class="wallet-pay"
-                on:click={() => sendPaymentWithWallet(activePayment)}
-                disabled={!canUseWalletForActivePayment || !wallet || walletConnecting || isPaymentSending}
-              >
-                {#if isPaymentSending}
-                  Sending…
-                {:else if !canUseWalletForActivePayment}
-                  Wallet payment unavailable
-                {:else if !wallet || !walletAddress}
-                  Connect wallet to pay
-                {:else}
-                  Pay with connected wallet
-                {/if}
-              </button>
-            </div>
 
             <label class="signature-field">
               <span>Transaction signature</span>
@@ -1127,7 +681,7 @@
     <h3>What happens next</h3>
     <ol>
       <li>Click “Generate payment instructions” to retrieve the required amount and payout address.</li>
-      <li>Connect a Solana wallet and use the “Pay with connected wallet” button, or settle the transfer manually.</li>
+      <li>Open the hosted facilitator link (or settle the transfer from your own wallet) to broadcast the payment.</li>
       <li>Paste or confirm the transaction signature and submit the form again once the transfer finalizes.</li>
     </ol>
     <p>
@@ -1303,7 +857,7 @@
     gap: clamp(1rem, 2vw, 1.5rem);
   }
 
-  .wallet-panel,
+  .hosted-panel,
   .payment-instructions {
     border: 1px solid #dbeafe;
     border-radius: 16px;
@@ -1313,46 +867,26 @@
     gap: 0.75rem;
   }
 
-  .wallet-panel select {
-    background: white;
-  }
-
-  .wallet-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
+  .hosted-checkout {
+    display: inline-flex;
     align-items: center;
-  }
-
-  .wallet-actions button {
-    background: #0f172a;
-  }
-
-  .install-link {
+    justify-content: center;
+    padding: 0.55rem 1.25rem;
+    border-radius: 10px;
+    background: #2563eb;
+    color: #fff;
     font-weight: 600;
-    color: #0f172a;
     text-decoration: none;
   }
 
-  .wallet-warning {
-    font-size: 0.95rem;
-    color: #9a3412;
+  .hosted-checkout:hover {
+    background: #1d4ed8;
   }
 
-  .wallet-error {
-    margin: 0;
-    color: #b91c1c;
-    font-weight: 600;
-  }
-
-  .cta-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-  }
-
-  .wallet-pay {
-    background: #111827;
+  .hosted-hint {
+    margin: 0.25rem 0 0;
+    font-size: 0.9rem;
+    color: #475569;
   }
 
   .signature-field {
