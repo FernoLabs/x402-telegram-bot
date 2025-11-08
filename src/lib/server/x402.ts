@@ -179,6 +179,8 @@ export async function parsePayment(
   return null;
 }
 
+const DEFAULT_FACILITATOR_URL = 'https://facilitator.payai.network/pay';
+
 interface PaymentResponseExtras {
   currencyCode?: string;
   network?: string;
@@ -189,6 +191,8 @@ interface PaymentResponseExtras {
   resource?: string | null;
   description?: string | null;
   expiresInSeconds?: number;
+  checkoutUrl?: string | null;
+  facilitatorUrl?: string | null;
 }
 
 function sanitizeMemo(value: string | null | undefined): string | null {
@@ -221,6 +225,11 @@ export function buildPaymentRequiredResponse(
   const nonce = typeof crypto?.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
   const expiresInSeconds = extras?.expiresInSeconds ?? 10 * 60;
   const expiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
+  const checkoutUrl = extras?.checkoutUrl ?? null;
+  const facilitatorUrl =
+    extras?.facilitatorUrl === null
+      ? null
+      : extras?.facilitatorUrl ?? DEFAULT_FACILITATOR_URL;
 
   const body: Record<string, unknown> = {
     error: 'Payment Required',
@@ -259,6 +268,14 @@ export function buildPaymentRequiredResponse(
 
   if (extras?.groupName) {
     body.groupName = extras.groupName;
+  }
+
+  if (checkoutUrl) {
+    body.checkout = checkoutUrl;
+  }
+
+  if (facilitatorUrl) {
+    body.facilitator = facilitatorUrl;
   }
 
   const headers: Record<string, string> = {

@@ -36,7 +36,7 @@
   };
 
   const buildFallbackCheckoutUrl = () => {
-    const url = new URL('https://payai.network/pay');
+    const url = new URL('https://facilitator.payai.network/pay');
     url.searchParams.set('amount', data.payment.amount.toString());
     url.searchParams.set('recipient', data.payment.recipient);
     url.searchParams.set('currency', data.payment.currency);
