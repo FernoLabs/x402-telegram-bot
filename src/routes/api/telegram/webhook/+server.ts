@@ -1,7 +1,10 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { AuctionRepository } from '$lib/server/db';
+import { TelegramBot } from '$lib/server/telegram';
 import type { TelegramWebhookUpdate } from '$lib/types';
+
+type TelegramMessageUpdate = NonNullable<TelegramWebhookUpdate['message']>;
 
 export const POST: RequestHandler = async ({ request, platform }) => {
   try {
@@ -21,7 +24,21 @@ export const POST: RequestHandler = async ({ request, platform }) => {
     const repo = new AuctionRepository(env.DB);
 
     const message = payload.message;
-    if (message?.reply_to_message && message.text) {
+    if (!message) {
+      return json({ ok: true });
+    }
+
+    const senderId = message.from?.id ? String(message.from.id) : null;
+    if (senderId && env.TELEGRAM_BOT_ID && senderId === String(env.TELEGRAM_BOT_ID)) {
+      return json({ ok: true });
+    }
+
+    const commandHandled = await handleGroupConfigCommand(message, env, repo);
+    if (commandHandled) {
+      return json({ ok: true });
+    }
+
+    if (message.reply_to_message && message.text) {
       const chatId = String(message.chat.id);
       const repliedMessageId = message.reply_to_message.message_id;
       const auction = await repo.getAuctionByTelegramMessage(repliedMessageId, chatId);
@@ -44,3 +61,126 @@ export const POST: RequestHandler = async ({ request, platform }) => {
     return json({ error: 'Failed to process webhook' }, { status: 500 });
   }
 };
+
+async function handleGroupConfigCommand(
+  message: TelegramMessageUpdate,
+  env: Env | undefined,
+  repo: AuctionRepository
+): Promise<boolean> {
+  const text = message.text?.trim();
+  if (!text || !text.startsWith('/')) {
+    return false;
+  }
+
+  const parts = text.split(/\s+/);
+  if (parts.length === 0) {
+    return false;
+  }
+
+  const [commandToken, ...args] = parts;
+  const [commandName, commandTarget] = commandToken.split('@');
+  const normalizedCommand = commandName.toLowerCase();
+
+  if (normalizedCommand !== '/setwallet' && normalizedCommand !== '/setprice') {
+    return false;
+  }
+
+  const expectedHandle = normalizeHandle(env?.TELEGRAM_BOT_USERNAME);
+  if (commandTarget) {
+    const targetHandle = commandTarget.toLowerCase();
+    if (expectedHandle && targetHandle !== expectedHandle) {
+      return false;
+    }
+  }
+
+  const chatId = String(message.chat.id);
+  const fromId = message.from?.id ? String(message.from.id) : null;
+  if (!fromId) {
+    return true;
+  }
+
+  const botToken = env?.TELEGRAM_BOT_TOKEN;
+  if (!botToken) {
+    console.warn('Ignoring configuration command because TELEGRAM_BOT_TOKEN is not set');
+    return true;
+  }
+
+  const bot = new TelegramBot(botToken);
+  const isAdmin = await bot.isGroupAdmin(chatId, fromId);
+
+  if (!isAdmin) {
+    await bot.sendMessage({
+      chat_id: chatId,
+      text: 'Only group admins can change the payout wallet or price.',
+      reply_to_message_id: message.message_id
+    });
+    return true;
+  }
+
+  const group = await repo.getGroupByTelegramId(chatId);
+
+  if (!group) {
+    await bot.sendMessage({
+      chat_id: chatId,
+      text: 'This chat is not registered with x402 yet. Visit the setup guide to create it first.',
+      reply_to_message_id: message.message_id
+    });
+    return true;
+  }
+
+  if (normalizedCommand === '/setwallet') {
+    const walletAddress = args.join(' ').trim();
+    if (!walletAddress) {
+      await bot.sendMessage({
+        chat_id: chatId,
+        text: 'Please include the Solana wallet address, for example: /setwallet 8Gh...xyz',
+        reply_to_message_id: message.message_id
+      });
+      return true;
+    }
+
+    const updated = await repo.updateGroupConfig(chatId, { ownerAddress: walletAddress });
+    if (updated) {
+      await bot.sendMessage({
+        chat_id: chatId,
+        text: `Updated payout wallet to:\n<code>${walletAddress}</code>`,
+        parse_mode: 'HTML',
+        reply_to_message_id: message.message_id
+      });
+    }
+
+    return true;
+  }
+
+  if (normalizedCommand === '/setprice') {
+    const amountArg = args[0];
+    const parsedAmount = amountArg ? Number(amountArg) : NaN;
+
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      await bot.sendMessage({
+        chat_id: chatId,
+        text: 'Please include a positive number of USDC, for example: /setprice 0.75',
+        reply_to_message_id: message.message_id
+      });
+      return true;
+    }
+
+    const updated = await repo.updateGroupConfig(chatId, { minBid: parsedAmount });
+    if (updated) {
+      await bot.sendMessage({
+        chat_id: chatId,
+        text: `Updated price per message to ${parsedAmount.toFixed(2)} USDC.`,
+        reply_to_message_id: message.message_id
+      });
+    }
+
+    return true;
+  }
+
+  return false;
+}
+
+function normalizeHandle(handle?: string | null): string | null {
+  if (!handle) return null;
+  return handle.replace(/^@/, '').toLowerCase();
+}

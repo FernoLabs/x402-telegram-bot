@@ -65,13 +65,25 @@ export interface PaymentDetails {
   network: string | null;
 }
 
+export interface TelegramChat {
+  id: number | string;
+  type?: 'private' | 'group' | 'supergroup' | 'channel';
+  title?: string;
+  username?: string;
+}
+
+export interface TelegramUser {
+  id: number | string;
+  username?: string;
+}
+
 export interface TelegramWebhookUpdate {
   update_id: number;
   message?: {
     message_id: number;
-    chat: { id: number | string };
+    chat: TelegramChat;
     text?: string;
     reply_to_message?: { message_id: number };
-    from?: { id: number | string; username?: string };
+    from?: TelegramUser;
   };
 }
