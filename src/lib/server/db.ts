@@ -76,14 +76,23 @@ export class AuctionRepository {
     return row ? mapGroupRow(row) : null;
   }
 
-  async getGroupByTelegramId(telegramId: string): Promise<Group | null> {
+  async getGroupByTelegramId(telegramId: string, alternateIds: string[] = []): Promise<Group | null> {
+    const identifiers = collectTelegramIdentifiers(telegramId, alternateIds);
+
+    if (identifiers.length === 0) {
+      return null;
+    }
+
+    const placeholders = identifiers.map(() => '?').join(', ');
+
     const row = await this.db
       .prepare(
         `SELECT id, name, category, telegram_id, min_bid, owner_address, active, total_earned, message_count, created_at
          FROM groups
-         WHERE telegram_id = ?`
+         WHERE LOWER(REPLACE(TRIM(telegram_id), '@', '')) IN (${placeholders})
+         LIMIT 1`
       )
-      .bind(telegramId)
+      .bind(...identifiers)
       .first<GroupRow>();
 
     return row ? mapGroupRow(row) : null;
@@ -98,7 +107,7 @@ export class AuctionRepository {
       .bind(
         input.name,
         input.category ?? null,
-        input.telegramId,
+        input.telegramId.trim(),
         input.minBid,
         input.ownerAddress,
         (input.active ?? true) ? 1 : 0
@@ -159,15 +168,22 @@ export class AuctionRepository {
       return this.getGroupByTelegramId(telegramId);
     }
 
-    values.push(telegramId);
+    const identifiers = collectTelegramIdentifiers(telegramId, []);
+
+    if (identifiers.length === 0) {
+      return this.getGroupByTelegramId(telegramId);
+    }
+
+    const placeholders = identifiers.map(() => '?').join(', ');
 
     await this.db
-      .prepare(`UPDATE groups SET ${assignments.join(', ')} WHERE telegram_id = ?`)
-      .bind(...values)
+      .prepare(`UPDATE groups SET ${assignments.join(', ')} WHERE LOWER(REPLACE(TRIM(telegram_id), '@', '')) IN (${placeholders})`)
+      .bind(...values, ...identifiers)
       .run();
 
     return this.getGroupByTelegramId(telegramId);
   }
+
 
   async listAuctions(groupId?: number): Promise<Auction[]> {
     const statement = groupId
@@ -372,4 +388,47 @@ function mapResponseRow(row: ResponseRow): AuctionResponse {
     text: row.text,
     createdAt: row.created_at
   };
+}
+
+function collectTelegramIdentifiers(primary: string, alternates: string[]): string[] {
+  return Array.from(
+    new Set(
+      [primary, ...alternates]
+        .map(normalizeTelegramIdentifier)
+        .filter((value): value is string => Boolean(value))
+    )
+  );
+}
+
+function normalizeTelegramIdentifier(value: string | number | null | undefined): string | null {
+  if (typeof value === 'number') {
+    return value.toString();
+  }
+
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  let normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  normalized = normalized.replace(/^https?:\/\/t\.me\//i, '');
+  normalized = normalized.replace(/^t\.me\//i, '');
+
+  if (normalized.startsWith('@')) {
+    normalized = normalized.slice(1);
+  }
+
+  normalized = normalized.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  if (/^-?\d+$/.test(normalized)) {
+    return normalized;
+  }
+
+  return normalized.toLowerCase();
 }
