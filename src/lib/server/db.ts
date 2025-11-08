@@ -76,6 +76,19 @@ export class AuctionRepository {
     return row ? mapGroupRow(row) : null;
   }
 
+  async getGroupByTelegramId(telegramId: string): Promise<Group | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT id, name, category, telegram_id, min_bid, owner_address, active, total_earned, message_count, created_at
+         FROM groups
+         WHERE telegram_id = ?`
+      )
+      .bind(telegramId)
+      .first<GroupRow>();
+
+    return row ? mapGroupRow(row) : null;
+  }
+
   async createGroup(input: CreateGroupInput): Promise<Group> {
     const result = await this.db
       .prepare(
@@ -123,6 +136,37 @@ export class AuctionRepository {
       )
       .bind(amount, groupId)
       .run();
+  }
+
+  async updateGroupConfig(
+    telegramId: string,
+    updates: { minBid?: number; ownerAddress?: string }
+  ): Promise<Group | null> {
+    const assignments: string[] = [];
+    const values: Array<number | string> = [];
+
+    if (typeof updates.minBid !== 'undefined') {
+      assignments.push('min_bid = ?');
+      values.push(updates.minBid);
+    }
+
+    if (typeof updates.ownerAddress !== 'undefined') {
+      assignments.push('owner_address = ?');
+      values.push(updates.ownerAddress);
+    }
+
+    if (assignments.length === 0) {
+      return this.getGroupByTelegramId(telegramId);
+    }
+
+    values.push(telegramId);
+
+    await this.db
+      .prepare(`UPDATE groups SET ${assignments.join(', ')} WHERE telegram_id = ?`)
+      .bind(...values)
+      .run();
+
+    return this.getGroupByTelegramId(telegramId);
   }
 
   async listAuctions(groupId?: number): Promise<Auction[]> {

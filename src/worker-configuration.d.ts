@@ -8,6 +8,8 @@ declare namespace Cloudflare {
                 TELEGRAM_BOT_TOKEN?: string;
                 TELEGRAM_WEBHOOK_SECRET?: string;
                 TELEGRAM_WEBHOOK_URL?: string;
+                TELEGRAM_BOT_USERNAME?: string;
+                TELEGRAM_BOT_ID?: string;
                 RECEIVER_ADDRESS?: string;
         }
 }

@@ -1,3 +1,12 @@
+<script lang="ts">
+  export let data: { botHandle: string | null; botId: string | null };
+
+  const defaultHandle = '@x402_bot';
+  const normalizedHandle = data.botHandle && data.botHandle.trim().length > 0 ? data.botHandle : defaultHandle;
+  const botHandle = normalizedHandle.startsWith('@') ? normalizedHandle : `@${normalizedHandle}`;
+  const botId = data.botId?.trim().length ? data.botId : null;
+</script>
+
 <section class="page" aria-labelledby="setup-title">
   <header>
     <h2 id="setup-title">Setup checklist</h2>
@@ -11,10 +20,13 @@
     <li>
       <h3>Invite the bot</h3>
       <p>
-        Search for <strong>@x402_bot</strong> in Telegram, add it as an admin, and enable the
+        Search for <strong>{botHandle}</strong> in Telegram, add it as an admin, and enable the
         ability to post, pin, and delete messages. Keep other permissions off until you are ready to
         go live.
       </p>
+      {#if botId}
+        <p class="bot-meta">Bot ID: <code>{botId}</code></p>
+      {/if}
     </li>
     <li>
       <h3>Link your payout wallet</h3>
@@ -22,6 +34,7 @@
         Provide the Solana address that should receive USDC. Payouts settle automatically once a
         message is confirmed, so pick a wallet you check often.
       </p>
+      <p class="callout">In your group chat, run <code>/setwallet &lt;SOL-address&gt;</code> as an admin.</p>
     </li>
     <li>
       <h3>Choose a price per message</h3>
@@ -29,6 +42,7 @@
         Decide on a flat rate in USDC. Most communities start between $0.50 and $5.00. You can edit
         this number anytime from the group directory.
       </p>
+      <p class="callout">Update it instantly with <code>/setprice &lt;amount-in-USDC&gt;</code>.</p>
     </li>
     <li>
       <h3>Share your guidelines</h3>
@@ -89,6 +103,20 @@
     line-height: 1.6;
   }
 
+  .bot-meta {
+    font-size: 0.95rem;
+    color: #1f2937;
+  }
+
+  code {
+    font-family: 'Source Code Pro', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
+      monospace;
+    background: #f1f5f9;
+    padding: 0.1rem 0.35rem;
+    border-radius: 6px;
+    color: #0f172a;
+  }
+
   .checklist {
     margin: 0;
     padding: 0;
@@ -118,6 +146,13 @@
 
   a {
     color: #0f172a;
+  }
+
+  .callout {
+    background: #f8fafc;
+    border-left: 4px solid #0ea5e9;
+    padding: 0.5rem 0.75rem;
+    border-radius: 8px;
   }
 
   .help {
