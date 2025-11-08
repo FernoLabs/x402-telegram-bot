@@ -1,23 +1,41 @@
 <script lang="ts">
+  import { onDestroy, onMount } from 'svelte';
   import type { Auction, Group } from '$lib/types';
 
+  interface PaymentAcceptOption {
+    scheme?: string;
+    networkId?: string;
+    currencyCode?: string;
+    amount?: number;
+    recipient?: string;
+    facilitator?: string;
+    url?: string;
+    assetAddress?: string;
+    assetType?: string;
+    paymentId?: string;
+    nonce?: string;
+  }
+
   interface PaymentRequestData {
-    amount: number;
+    amount?: number;
+    maxAmountRequired?: number;
     currency?: string;
-    recipient: string;
+    currencyCode?: string;
+    recipient?: string;
+    paymentAddress?: string;
     network?: string;
+    networkId?: string;
     instructions?: string;
     facilitator?: string;
     checkoutUrl?: string;
-    accepts?: Array<{
-      scheme?: string;
-      networkId?: string;
-      currencyCode?: string;
-      amount?: number;
-      recipient?: string;
-      facilitator?: string;
-      url?: string;
-    }>;
+    accepts?: PaymentAcceptOption[];
+    description?: string;
+    resource?: string;
+    expiresAt?: string;
+    paymentId?: string;
+    nonce?: string;
+    memo?: string;
+    groupName?: string;
   }
 
   export let data: {
@@ -50,13 +68,62 @@
   let error: string | null = null;
   let paymentRequest: PaymentRequestData | null = null;
   let successAuction: Auction | null = null;
+  let paymentPayloadInput = '';
+  let paymentPayloadNotice: string | null = null;
+  let paymentPayloadError: string | null = null;
+  let lastCheckoutWindow: Window | null = null;
+  let paymentAmount: number | null = null;
+  let paymentCurrency: string | null = null;
+  let paymentNetwork: string | null = null;
+  let paymentRecipient: string | null = null;
+  let paymentFacilitator: string | null = null;
+  let paymentAmountDisplay: string | null = null;
+  let paymentCurrencyLabel = 'USDC';
+  let paymentNetworkDisplay = 'the configured network';
+  let paymentExpirationDisplay: string | null = null;
+  let resolvedMemo = '';
 
   const formatUsd = (value: number) => currencyFormatter.format(value);
+
+  const formatAmountForCurrency = (value: number, currency: string): string => {
+    const normalized = currency ? currency.toUpperCase() : '';
+    if (normalized === 'USDC' || normalized === 'USD') {
+      return formatUsd(value);
+    }
+
+    return value.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 6
+    });
+  };
+
+  const formatExpiration = (expiresAt: string): string | null => {
+    const timestamp = Date.parse(expiresAt);
+    if (Number.isNaN(timestamp)) {
+      return null;
+    }
+
+    return new Date(timestamp).toLocaleString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
 
   const resetStatus = () => {
     error = null;
     paymentRequest = null;
     successAuction = null;
+    paymentPayloadNotice = null;
+    paymentPayloadError = null;
+  };
+
+  const clearPaymentPayload = () => {
+    paymentPayloadInput = '';
+    paymentPayloadNotice = null;
+    paymentPayloadError = null;
   };
 
   const parseJson = (text: string): unknown => {
@@ -72,17 +139,155 @@
     }
   };
 
+  const resolveAmount = (request: PaymentRequestData): number | null => {
+    if (typeof request.maxAmountRequired === 'number' && !Number.isNaN(request.maxAmountRequired)) {
+      return request.maxAmountRequired;
+    }
+    if (typeof request.amount === 'number' && !Number.isNaN(request.amount)) {
+      return request.amount;
+    }
+    if (request.accepts) {
+      for (const option of request.accepts) {
+        if (typeof option.amount === 'number' && !Number.isNaN(option.amount)) {
+          return option.amount;
+        }
+      }
+    }
+    return null;
+  };
+
+  const resolveStringField = (candidates: Array<string | undefined | null>): string | null => {
+    for (const value of candidates) {
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (trimmed) {
+          return trimmed;
+        }
+      }
+    }
+    return null;
+  };
+
+  const resolveCurrency = (request: PaymentRequestData): string | null => {
+    const direct = resolveStringField([request.currencyCode, request.currency]);
+    if (direct) {
+      return direct;
+    }
+    if (request.accepts) {
+      for (const option of request.accepts) {
+        const found = resolveStringField([option.currencyCode]);
+        if (found) {
+          return found;
+        }
+      }
+    }
+    return null;
+  };
+
+  const resolveRecipient = (request: PaymentRequestData): string | null => {
+    const direct = resolveStringField([request.paymentAddress, request.recipient]);
+    if (direct) {
+      return direct;
+    }
+    if (request.accepts) {
+      for (const option of request.accepts) {
+        const found = resolveStringField([option.recipient]);
+        if (found) {
+          return found;
+        }
+      }
+    }
+    return null;
+  };
+
+  const resolveNetwork = (request: PaymentRequestData): string | null => {
+    const direct = resolveStringField([request.networkId, request.network]);
+    if (direct) {
+      return direct;
+    }
+    if (request.accepts) {
+      for (const option of request.accepts) {
+        const found = resolveStringField([option.networkId]);
+        if (found) {
+          return found;
+        }
+      }
+    }
+    return null;
+  };
+
+  const resolveFacilitator = (request: PaymentRequestData): string | null => {
+    const direct = resolveStringField([request.facilitator]);
+    if (direct) {
+      return direct;
+    }
+    if (request.accepts) {
+      for (const option of request.accepts) {
+        const found = resolveStringField([option.facilitator, option.url]);
+        if (found) {
+          return found;
+        }
+      }
+    }
+    return null;
+  };
+
+  const resolvePaymentId = (request: PaymentRequestData): string | null => {
+    const direct = resolveStringField([request.paymentId]);
+    if (direct) {
+      return direct;
+    }
+    if (request.accepts) {
+      for (const option of request.accepts) {
+        const found = resolveStringField([option.paymentId]);
+        if (found) {
+          return found;
+        }
+      }
+    }
+    return null;
+  };
+
+  const resolveNonce = (request: PaymentRequestData): string | null => {
+    const direct = resolveStringField([request.nonce]);
+    if (direct) {
+      return direct;
+    }
+    if (request.accepts) {
+      for (const option of request.accepts) {
+        const found = resolveStringField([option.nonce]);
+        if (found) {
+          return found;
+        }
+      }
+    }
+    return null;
+  };
+
   function buildPaymentUrl(request: PaymentRequestData, group: Group | null, note: string): string {
     const url = new URL('https://payai.network/pay');
-    url.searchParams.set('amount', request.amount.toString());
-    url.searchParams.set('recipient', request.recipient);
+    const amount = resolveAmount(request);
+    const recipient = resolveRecipient(request);
+    const currency = resolveCurrency(request);
+    const network = resolveNetwork(request);
+    const facilitator = resolveFacilitator(request);
+    const paymentId = resolvePaymentId(request);
+    const nonce = resolveNonce(request);
 
-    if (request.currency) {
-      url.searchParams.set('currency', request.currency);
+    if (amount !== null) {
+      url.searchParams.set('amount', amount.toString());
     }
 
-    if (request.network) {
-      url.searchParams.set('network', request.network);
+    if (recipient) {
+      url.searchParams.set('recipient', recipient);
+    }
+
+    if (currency) {
+      url.searchParams.set('currency', currency);
+    }
+
+    if (network) {
+      url.searchParams.set('network', network);
     }
 
     if (group) {
@@ -93,8 +298,16 @@
       url.searchParams.set('memo', note);
     }
 
-    if (request.facilitator) {
-      url.searchParams.set('facilitator', request.facilitator);
+    if (facilitator) {
+      url.searchParams.set('facilitator', facilitator);
+    }
+
+    if (paymentId) {
+      url.searchParams.set('paymentId', paymentId);
+    }
+
+    if (nonce) {
+      url.searchParams.set('nonce', nonce);
     }
 
     return url.toString();
@@ -138,9 +351,15 @@
     loading = true;
 
     try {
+      const trimmedPayload = paymentPayloadInput.trim();
+      const headers: Record<string, string> = { 'content-type': 'application/json' };
+      if (trimmedPayload) {
+        headers['x-payment'] = trimmedPayload;
+      }
+
       const response = await fetch('/api/auctions', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers,
         body: JSON.stringify({
           groupId: selectedGroup.id,
           message: trimmedMessage,
@@ -154,14 +373,19 @@
         successAuction = (payload as Auction) ?? null;
         message = '';
         sender = '';
+        clearPaymentPayload();
       } else if (response.status === 402) {
-        if (
+        const hasPaymentDetails =
           payload &&
           typeof payload === 'object' &&
-          'amount' in payload &&
-          'recipient' in payload
-        ) {
+          ('maxAmountRequired' in payload || 'amount' in payload || 'paymentAddress' in payload || 'recipient' in payload);
+
+        if (hasPaymentDetails) {
           paymentRequest = payload as PaymentRequestData;
+          if (trimmedPayload) {
+            paymentPayloadError =
+              'The facilitator has not confirmed this payment yet. Wait a few seconds and try again after the checkout reports the transfer is complete.';
+          }
         } else {
           error = 'Payment details were not returned by the server.';
         }
@@ -184,9 +408,129 @@
 
   $: selectedGroup = findSelectedGroup(selectedGroupId);
   $: minimumBid = selectedGroup ? formatUsd(selectedGroup.minBid) : null;
+  $: resolvedMemo = paymentRequest?.memo?.trim() ?? message.trim();
   $: paymentUrl = paymentRequest
-    ? paymentRequest.checkoutUrl ?? buildPaymentUrl(paymentRequest, selectedGroup, message.trim())
+    ? paymentRequest.checkoutUrl ?? buildPaymentUrl(paymentRequest, selectedGroup, resolvedMemo)
     : null;
+  $: paymentAmount = paymentRequest ? resolveAmount(paymentRequest) : null;
+  $: paymentCurrency = paymentRequest ? resolveCurrency(paymentRequest) : null;
+  $: paymentNetwork = paymentRequest ? resolveNetwork(paymentRequest) : null;
+  $: paymentRecipient = paymentRequest ? resolveRecipient(paymentRequest) : null;
+  $: paymentFacilitator = paymentRequest ? resolveFacilitator(paymentRequest) : null;
+  $: paymentCurrencyLabel = (paymentCurrency ?? 'USDC').toUpperCase();
+  $: paymentAmountDisplay =
+    paymentAmount !== null ? formatAmountForCurrency(paymentAmount, paymentCurrencyLabel) : null;
+  $: paymentNetworkDisplay = paymentNetwork ?? 'the configured network';
+  $: paymentExpirationDisplay =
+    paymentRequest?.expiresAt ? formatExpiration(paymentRequest.expiresAt) : null;
+  $: submitButtonLabel = paymentRequest
+    ? paymentPayloadInput.trim()
+      ? 'Submit payment confirmation'
+      : 'Check payment status'
+    : 'Generate payment link';
+
+  const applyDetectedPayload = (rawPayload: string) => {
+    const trimmed = rawPayload.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    paymentPayloadInput = trimmed;
+    paymentPayloadNotice = 'Captured payment payload from the x402 checkout window.';
+    paymentPayloadError = null;
+  };
+
+  const extractPaymentPayload = (data: unknown): string | null => {
+    if (typeof data === 'string') {
+      const trimmed = data.trim();
+      if (!trimmed) {
+        return null;
+      }
+      if (trimmed.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+          return extractPaymentPayload(parsed);
+        } catch (parseError) {
+          console.warn('Unable to parse payment payload message', parseError);
+          return null;
+        }
+      }
+      return trimmed;
+    }
+
+    if (data && typeof data === 'object') {
+      const record = data as Record<string, unknown>;
+      const candidateKeys = ['paymentPayload', 'payload', 'x402'];
+      for (const key of candidateKeys) {
+        const value = record[key];
+        if (typeof value === 'string' && value.trim()) {
+          return value.trim();
+        }
+      }
+      if (typeof record.type === 'string' && record.type.toLowerCase().includes('payment')) {
+        const nested = record.data ?? record.payload ?? record.paymentPayload;
+        if (typeof nested === 'string' && nested.trim()) {
+          return nested.trim();
+        }
+      }
+    }
+
+    return null;
+  };
+
+  const handlePaymentMessage = (event: MessageEvent) => {
+    if (!paymentRequest) {
+      return;
+    }
+
+    if (paymentUrl) {
+      try {
+        const checkoutOrigin = new URL(paymentUrl).origin;
+        if (checkoutOrigin && checkoutOrigin !== 'null' && checkoutOrigin !== event.origin) {
+          return;
+        }
+      } catch (originError) {
+        console.warn('Failed to validate payment payload origin', originError);
+      }
+    }
+
+    const payload = extractPaymentPayload(event.data);
+    if (!payload) {
+      return;
+    }
+
+    applyDetectedPayload(payload);
+  };
+
+  const launchCheckout = () => {
+    if (!paymentUrl) {
+      return;
+    }
+
+    paymentPayloadNotice = null;
+    paymentPayloadError = null;
+    if (lastCheckoutWindow && !lastCheckoutWindow.closed) {
+      lastCheckoutWindow.close();
+    }
+    const target = window.open(paymentUrl, '_blank', 'noopener,noreferrer');
+    if (!target) {
+      window.location.href = paymentUrl;
+      return;
+    }
+    lastCheckoutWindow = target;
+    target.focus();
+  };
+
+  onMount(() => {
+    window.addEventListener('message', handlePaymentMessage);
+  });
+
+  onDestroy(() => {
+    window.removeEventListener('message', handlePaymentMessage);
+    if (lastCheckoutWindow && !lastCheckoutWindow.closed) {
+      lastCheckoutWindow.close();
+    }
+  });
 </script>
 
 <section class="page" aria-labelledby="send-title">
@@ -247,9 +591,9 @@
 
     <button type="submit" disabled={loading || !selectedGroup} aria-busy={loading}>
       {#if loading}
-        Generating payment request…
+        Submitting…
       {:else}
-        Generate payment link
+        {submitButtonLabel}
       {/if}
     </button>
   </form>
@@ -265,20 +609,61 @@
     <section class="status payment" aria-live="polite">
       <h3>Payment required</h3>
       <p>
-        Send {formatUsd(paymentRequest.amount)} {paymentRequest.currency ?? 'USDC'} on
-        {paymentRequest.network ?? 'Solana'} to <code>{paymentRequest.recipient}</code>. Use x402 to
-        broadcast the transfer, then resubmit this form to confirm delivery.
+        {#if paymentAmountDisplay}
+          Send {paymentAmountDisplay} {paymentCurrencyLabel}
+        {:else}
+          Send the required amount of {paymentCurrencyLabel}
+        {/if}
+        on {paymentNetworkDisplay}
+        {#if paymentRecipient}
+          to <code>{paymentRecipient}</code>
+        {:else}
+          to the payment address shown in checkout
+        {/if}
+        . Use x402 to broadcast the transfer, then resubmit this form to confirm delivery.
       </p>
-      {#if paymentUrl}
-        <a class="action" href={paymentUrl} target="_blank" rel="noreferrer">
-          Open x402 checkout
-        </a>
+      {#if paymentRequest.description}
+        <p>{paymentRequest.description}</p>
       {/if}
+      {#if paymentUrl}
+        <button class="action" type="button" on:click={launchCheckout}>
+          Open x402 checkout
+        </button>
+      {/if}
+      <label class="payload-field">
+        <span>Payment payload</span>
+        <textarea
+          rows={3}
+          placeholder="Paste the payment payload returned after the transaction completes"
+          bind:value={paymentPayloadInput}
+          on:input={() => {
+            paymentPayloadNotice = null;
+            paymentPayloadError = null;
+          }}
+          disabled={loading}
+        ></textarea>
+        <small>
+          Keep this tab open while completing checkout. We'll capture the payload automatically when
+          possible, or you can paste it above.
+        </small>
+        {#if paymentPayloadNotice}
+          <span class="payload-notice">{paymentPayloadNotice}</span>
+        {/if}
+        {#if paymentPayloadError}
+          <span class="payload-error">{paymentPayloadError}</span>
+        {/if}
+      </label>
       {#if paymentRequest.instructions}
         <p class="footnote">{paymentRequest.instructions}</p>
       {/if}
-      {#if paymentRequest.facilitator}
-        <p class="footnote">Payments are verified via {paymentRequest.facilitator}.</p>
+      {#if paymentRequest.resource}
+        <p class="footnote">Resource: {paymentRequest.resource}</p>
+      {/if}
+      {#if paymentFacilitator}
+        <p class="footnote">Payments are verified via {paymentFacilitator}.</p>
+      {/if}
+      {#if paymentExpirationDisplay}
+        <p class="footnote">Payment request expires {paymentExpirationDisplay}.</p>
       {/if}
     </section>
   {/if}
@@ -296,9 +681,15 @@
   <aside class="help" aria-live="polite">
     <h3>What happens next</h3>
     <ol>
-      <li>Click “Generate payment link” to retrieve x402 payment instructions.</li>
-      <li>Approve the Solana transaction from your wallet using x402.</li>
-      <li>The bot posts the message and pins a receipt once payment confirms.</li>
+      <li>Click “Generate payment link” to retrieve x402 payment instructions and open checkout.</li>
+      <li>
+        Approve the Solana transaction from your wallet using x402. Keep this page open so we can capture
+        the payment payload or paste it manually.
+      </li>
+      <li>
+        Press “Submit payment confirmation” once a payload is present to notify the bot and post the
+        message.
+      </li>
     </ol>
     <p>
       Need to adjust the price? Update it from the <a href="/groups">group directory</a> before
@@ -435,6 +826,43 @@
     font-weight: 600;
     text-decoration: none;
     width: fit-content;
+    border: none;
+    cursor: pointer;
+  }
+
+  .action:focus-visible {
+    outline: 3px solid rgba(59, 130, 246, 0.65);
+    outline-offset: 2px;
+  }
+
+  .payload-field {
+    display: grid;
+    gap: 0.45rem;
+    margin-top: 1rem;
+  }
+
+  .payload-field textarea {
+    min-height: 3.75rem;
+    font-family: 'Fira Code', 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
+      monospace;
+  }
+
+  .payload-field small {
+    color: #0f172a;
+    opacity: 0.8;
+    font-size: 0.85rem;
+  }
+
+  .payload-notice {
+    color: #15803d;
+    font-size: 0.85rem;
+    font-weight: 600;
+  }
+
+  .payload-error {
+    color: #b91c1c;
+    font-size: 0.85rem;
+    font-weight: 600;
   }
 
   .footnote {

@@ -99,10 +99,12 @@ export const POST: RequestHandler = async ({ request, platform }) => {
 
     if (!payment || payment.amount < group.minBid || payment.amount <= 0) {
       return buildPaymentRequiredResponse(group.minBid, receiver, facilitatorUrl, {
-        currency,
+        currencyCode: currency,
         network,
         groupName: group.name,
-        memo: message
+        memo: message,
+        resource: 'POST /api/auctions',
+        description: `Send ${currency} on ${network} to publish a paid message in ${group.name}.`
       });
     }
 
