@@ -300,7 +300,7 @@ export function buildPaymentRequiredResponse(
   const currency = extras?.currency ?? 'USDC';
   const memo = sanitizeMemo(extras?.memo);
 
-  const checkoutUrl = new URL('https://www.x402.org/pay');
+  const checkoutUrl = new URL('https://payai.network/pay');
   checkoutUrl.searchParams.set('amount', requiredAmount.toString());
   checkoutUrl.searchParams.set('recipient', receiverAddress);
   checkoutUrl.searchParams.set('currency', currency);
