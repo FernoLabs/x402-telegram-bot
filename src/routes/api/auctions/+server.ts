@@ -82,10 +82,23 @@ export const POST: RequestHandler = async ({ request, platform }) => {
       return json({ error: 'Group not found' }, { status: 404 });
     }
 
-    const payment = parsePayment(request);
+    const receiver = env.RECEIVER_ADDRESS ?? group.ownerAddress;
+    const facilitatorUrl = env.FACILITATOR_URL ?? null;
+    const currency = env.PAYMENT_CURRENCY ?? 'USDC';
+    const network = env.PAYMENT_NETWORK ?? 'solana';
+
+    const payment = await parsePayment(request, {
+      facilitatorUrl,
+      paymentDetails: {
+        amount: group.minBid,
+        currency,
+        recipient: receiver,
+        network
+      }
+    });
+
     if (!payment || payment.amount < group.minBid || payment.amount <= 0) {
-      const receiver = env.RECEIVER_ADDRESS ?? group.ownerAddress;
-      return buildPaymentRequiredResponse(group.minBid, receiver);
+      return buildPaymentRequiredResponse(group.minBid, receiver, facilitatorUrl);
     }
 
     const auction = await repo.createAuction({
