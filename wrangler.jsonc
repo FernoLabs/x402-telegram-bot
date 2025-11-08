@@ -3,30 +3,33 @@
  * Update the D1 database identifiers with values from `wrangler d1 create`.
  */
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "x402-tg-auction-bot",
-  "main": ".svelte-kit/cloudflare/_worker.js",
-  "compatibility_date": "2025-11-07",
-  "compatibility_flags": ["nodejs_als"],
-  "assets": {
-    "binding": "ASSETS",
-    "directory": ".svelte-kit/cloudflare"
-  },
-  "observability": {
-    "enabled": true
-  },
-  "migrations_dir": "migrations",
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "x402-auction-db",
-      "database_id": "00000000-0000-0000-0000-000000000000",
-      "preview_database_id": "00000000-0000-0000-0000-000000000000"
-    }
-  ]
-  /**
-   * Sensitive values such as TELEGRAM_BOT_TOKEN should be stored with `wrangler secret put`.
-   * You can optionally define default vars for non-sensitive configuration:
-   * "vars": { "TELEGRAM_WEBHOOK_URL": "https://example.com/api/telegram/webhook" }
-   */
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "x402-tg-auction-bot",
+	"main": ".svelte-kit/cloudflare/_worker.js",
+	"compatibility_date": "2025-11-07",
+	"compatibility_flags": [
+		"nodejs_als"
+	],
+	"assets": {
+		"binding": "ASSETS",
+		"directory": ".svelte-kit/cloudflare"
+	},
+	"observability": {
+		"enabled": true
+	},
+	"migrations_dir": "migrations",
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "x402-auction-db",
+			"database_id": "00000000-0000-0000-0000-000000000000",
+			"preview_database_id": "00000000-0000-0000-0000-000000000000"
+		},
+		{
+			"binding": "x402_auction_db",
+			"database_name": "x402-auction-db",
+			"database_id": "c7203407-91b0-4830-8079-394f5d8e436e"
+		}
+	],
+   "vars": { "TELEGRAM_WEBHOOK_URL": "https://x402-telegram-bot.pages.devapi/telegram/webhook" }
 }
