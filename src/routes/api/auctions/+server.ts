@@ -10,32 +10,32 @@ const telegramBot = TELEGRAM_BOT_TOKEN ? new TelegramBot(TELEGRAM_BOT_TOKEN) : n
 
 export const GET: RequestHandler = async ({ url }) => {
   const groupId = url.searchParams.get('groupId');
-  
+
   if (groupId) {
-    const auctions = db.getAllAuctions().filter(a => a.groupId === parseInt(groupId));
-    return json(auctions);
+    const groupAuctions = (await db.getAllAuctions()).filter(
+      (auction) => auction.groupId === parseInt(groupId)
+    );
+    return json(groupAuctions);
   }
-  
-  return json(db.getAllAuctions());
+
+  return json(await db.getAllAuctions());
 };
 
 export const POST: RequestHandler = async ({ request }) => {
   try {
     const payment = await x402.verifyPayment(request);
     const data = await request.json();
-    
-    const group = db.getGroup(data.groupId);
+
+    const group = await db.getGroup(data.groupId);
     if (!group) {
       return json({ error: 'Group not found' }, { status: 404 });
     }
 
-    // Check payment
     if (!payment || payment.amount < group.minBid) {
       return x402.create402Response(group.minBid, group.ownerAddress);
     }
 
-    // Create auction
-    const auction = db.createAuction({
+    const auction = await db.createAuction({
       groupId: data.groupId,
       bidderAddress: payment.sender,
       bidderName: data.bidderName || 'Anonymous AI',
@@ -44,20 +44,18 @@ export const POST: RequestHandler = async ({ request }) => {
       txHash: payment.txHash
     });
 
-    // Update group stats
-    db.updateGroup(group.id, {
+    await db.updateGroup(group.id, {
       totalEarned: group.totalEarned + payment.amount,
       messageCount: group.messageCount + 1
     });
 
-    // Post to Telegram
     if (telegramBot && group.telegramId) {
       try {
         const messageText = telegramBot.formatAuctionMessage(auction);
         const telegramResponse = await telegramBot.sendMessage(group.telegramId, messageText);
         const messageId = telegramResponse?.result?.message_id;
 
-        db.updateAuction(auction.id, {
+        await db.updateAuction(auction.id, {
           status: 'active',
           postedAt: new Date(),
           telegramChatId: group.telegramId,
