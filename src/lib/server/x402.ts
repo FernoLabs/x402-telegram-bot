@@ -1,30 +1,24 @@
 import type { PaymentDetails } from '$lib/types';
+import { verifySolanaPayment } from './solana';
 
 const AMOUNT_HEADERS = ['x-402-amount', 'x-payment-amount'];
 const SENDER_HEADERS = ['x-402-sender', 'x-payment-sender'];
 const TX_HASH_HEADERS = ['x-402-tx-hash', 'x-payment-txhash'];
 const NETWORK_HEADERS = ['x-402-network', 'x-payment-network'];
 const PAYMENT_PAYLOAD_HEADER = 'x-payment';
-const FACILITATOR_HEADERS = ['x-payment-facilitator', 'x-402-facilitator'];
-const DEFAULT_FACILITATOR_URL = 'https://facilitator.payai.network';
 
 interface PaymentValidationOptions {
-  facilitatorUrl?: string | null;
   paymentDetails?: {
     amount: number;
     currency: string;
     recipient: string;
     network: string;
   };
-}
-
-interface FacilitatorVerificationResult {
-  valid: boolean;
-  amount: number;
-  currency: string;
-  sender: string;
-  network: string | null;
-  txHash: string | null;
+  solana?: {
+    rpcUrl: string;
+    tokenMintAddress?: string | null;
+    commitment?: 'processed' | 'confirmed' | 'finalized';
+  };
 }
 
 function readHeader(request: Request, keys: string[]): string | null {
@@ -37,32 +31,26 @@ function readHeader(request: Request, keys: string[]): string | null {
   return null;
 }
 
-function normalizeFacilitatorUrl(url: string): string {
-  return url.endsWith('/') ? url.slice(0, -1) : url;
+interface LegacyHeaderValues {
+  amount: number | null;
+  sender: string | null;
+  txHash: string | null;
+  network: string | null;
 }
 
-function parseLegacyHeaders(request: Request): PaymentDetails | null {
+function parseLegacyHeaders(request: Request): LegacyHeaderValues {
   const amountHeader = readHeader(request, AMOUNT_HEADERS);
   const senderHeader = readHeader(request, SENDER_HEADERS);
+  const txHashHeader = readHeader(request, TX_HASH_HEADERS);
+  const networkHeader = readHeader(request, NETWORK_HEADERS);
 
-  if (!amountHeader || !senderHeader) {
-    return null;
-  }
-
-  const amount = Number.parseFloat(amountHeader);
-  if (Number.isNaN(amount)) {
-    return null;
-  }
-
-  const txHash = readHeader(request, TX_HASH_HEADERS);
-  const network = readHeader(request, NETWORK_HEADERS);
+  const amount = amountHeader ? Number.parseFloat(amountHeader) : Number.NaN;
 
   return {
-    amount,
+    amount: Number.isNaN(amount) ? null : amount,
     sender: senderHeader,
-    txHash: txHash ?? null,
-    currency: 'USDC',
-    network: network ?? 'solana'
+    txHash: txHashHeader,
+    network: networkHeader
   };
 }
 
@@ -108,165 +96,87 @@ function extractTxHash(payload: Record<string, unknown>): string | null {
   return null;
 }
 
-function extractNetwork(payload: Record<string, unknown>, fallback: string): string {
-  const candidateKeys = ['network', 'networkId'];
-  for (const key of candidateKeys) {
-    const value = payload[key];
-    if (typeof value === 'string' && value.trim()) {
-      return value;
-    }
-  }
-
-  const nested = payload.payment;
-  if (nested && typeof nested === 'object') {
-    for (const key of candidateKeys) {
-      const value = (nested as Record<string, unknown>)[key];
-      if (typeof value === 'string' && value.trim()) {
-        return value;
-      }
-    }
-  }
-  return fallback;
-}
-
-function extractCurrency(payload: Record<string, unknown>, fallback: string): string {
-  const candidateKeys = ['currency', 'currencyCode'];
-  for (const key of candidateKeys) {
-    const value = payload[key];
-    if (typeof value === 'string' && value.trim()) {
-      return value;
-    }
-  }
-
-  const nested = payload.payment;
-  if (nested && typeof nested === 'object') {
-    for (const key of candidateKeys) {
-      const value = (nested as Record<string, unknown>)[key];
-      if (typeof value === 'string' && value.trim()) {
-        return value;
-      }
-    }
-  }
-  return fallback;
-}
-
-async function verifyWithFacilitator(
-  encodedPayload: string,
-  options: Required<PaymentValidationOptions>['paymentDetails'],
-  facilitatorUrl: string
-): Promise<FacilitatorVerificationResult | null> {
-  try {
-    const endpoint = `${normalizeFacilitatorUrl(facilitatorUrl)}/verify`;
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        paymentPayload: encodedPayload,
-        paymentDetails: {
-          amount: options.amount,
-          currencyCode: options.currency,
-          recipient: options.recipient,
-          networkId: options.network
-        }
-      })
-    });
-
-    if (!response.ok) {
-      console.warn('Facilitator verify request failed', response.status, await response.text());
-      return null;
-    }
-
-    const payload = (await response.json()) as Record<string, unknown> | null;
-    if (!payload || payload.error) {
-      return null;
-    }
-
-    const isValid =
-      payload.valid === true ||
-      payload.status === 'confirmed' ||
-      payload.status === 'settled' ||
-      payload.state === 'verified' ||
-      (typeof payload.valid === 'undefined' && !('invalid' in payload));
-
-    if (!isValid) {
-      return null;
-    }
-
-    const amountCandidates = [payload.amount, payload.amountReceived, payload.value, payload.paymentAmount];
-    const nestedPayment = payload.payment;
-    if (nestedPayment && typeof nestedPayment === 'object') {
-      const nested = nestedPayment as Record<string, unknown>;
-      amountCandidates.push(nested.amount, nested.value, nested.amountReceived);
-    }
-    let resolvedAmount = Number.NaN;
-    for (const candidate of amountCandidates) {
-      if (typeof candidate === 'number') {
-        resolvedAmount = candidate;
-        break;
-      }
-      if (typeof candidate === 'string' && candidate.trim()) {
-        const parsed = Number.parseFloat(candidate);
-        if (!Number.isNaN(parsed)) {
-          resolvedAmount = parsed;
-          break;
-        }
-      }
-    }
-
-    if (Number.isNaN(resolvedAmount)) {
-      resolvedAmount = options.amount;
-    }
-
-    const sender = extractSender(payload) ?? 'unknown';
-    const txHash = extractTxHash(payload);
-    const network = extractNetwork(payload, options.network);
-    const currency = extractCurrency(payload, options.currency);
-
-    return {
-      valid: true,
-      amount: resolvedAmount,
-      currency,
-      sender,
-      network,
-      txHash: txHash ?? null
-    };
-  } catch (error) {
-    console.error('Failed to verify payment with facilitator', error);
-    return null;
-  }
-}
-
 export async function parsePayment(
   request: Request,
   options?: PaymentValidationOptions
 ): Promise<PaymentDetails | null> {
   const legacy = parseLegacyHeaders(request);
-  if (legacy) {
-    return legacy;
+
+  if (!options?.paymentDetails) {
+    if (legacy.amount !== null && legacy.sender) {
+      return {
+        amount: legacy.amount,
+        sender: legacy.sender,
+        txHash: legacy.txHash,
+        currency: 'USDC',
+        network: legacy.network ?? 'solana'
+      };
+    }
+
+    return null;
   }
 
   const encodedPayload = request.headers.get(PAYMENT_PAYLOAD_HEADER);
-  if (!encodedPayload || !options?.paymentDetails) {
-    return null;
+  let payload: Record<string, unknown> | null = null;
+
+  if (encodedPayload) {
+    try {
+      const normalized = encodedPayload.replace(/\s+/g, '');
+      const restored = normalized.replace(/-/g, '+').replace(/_/g, '/');
+      const padding = restored.length % 4 === 0 ? 0 : 4 - (restored.length % 4);
+      const padded = restored + '='.repeat(padding);
+      const decoded = atob(padded);
+      payload = JSON.parse(decoded) as Record<string, unknown>;
+    } catch (error) {
+      console.warn('Failed to decode x-payment payload', error);
+      payload = null;
+    }
   }
 
-  const facilitatorOverride = readHeader(request, FACILITATOR_HEADERS);
-  const facilitatorUrl =
-    facilitatorOverride && facilitatorOverride.trim().length > 0
-      ? facilitatorOverride
-      : options.facilitatorUrl ?? DEFAULT_FACILITATOR_URL;
-  const result = await verifyWithFacilitator(encodedPayload, options.paymentDetails, facilitatorUrl);
-  if (!result) {
-    return null;
+  const txHashFromPayload = payload ? extractTxHash(payload) : null;
+  const txHash = txHashFromPayload ?? legacy.txHash;
+
+  const expectedNetwork = options.paymentDetails.network?.toLowerCase();
+  const expectedCurrency = options.paymentDetails.currency?.toUpperCase();
+
+  if (expectedNetwork === 'solana' && txHash) {
+    const verification = await verifySolanaPayment({
+      signature: txHash,
+      rpcUrl: options.solana?.rpcUrl,
+      recipient: options.paymentDetails.recipient,
+      minAmount: options.paymentDetails.amount,
+      expectedCurrency,
+      tokenMintAddress: options.solana?.tokenMintAddress ?? null,
+      commitment: options.solana?.commitment ?? 'confirmed'
+    });
+
+    if (!verification) {
+      return null;
+    }
+
+    const senderFromPayload = payload ? extractSender(payload) : null;
+    const resolvedSender = senderFromPayload ?? legacy.sender ?? verification.sender;
+
+    return {
+      amount: verification.amount,
+      sender: resolvedSender ?? verification.sender,
+      txHash,
+      currency: expectedCurrency ?? verification.currency,
+      network: 'solana'
+    };
   }
 
-  return {
-    amount: result.amount,
-    sender: result.sender,
-    txHash: result.txHash,
-    currency: typeof result.currency === 'string' ? result.currency.toUpperCase() : result.currency,
-    network: result.network
-  };
+  if (legacy.amount !== null && legacy.sender && legacy.amount >= options.paymentDetails.amount) {
+    return {
+      amount: legacy.amount,
+      sender: legacy.sender,
+      txHash: legacy.txHash,
+      currency: expectedCurrency ?? options.paymentDetails.currency,
+      network: legacy.network ?? options.paymentDetails.network
+    };
+  }
+
+  return null;
 }
 
 interface PaymentResponseExtras {
@@ -297,10 +207,8 @@ function sanitizeMemo(value: string | null | undefined): string | null {
 export function buildPaymentRequiredResponse(
   requiredAmount: number,
   receiverAddress: string,
-  facilitatorUrl?: string | null,
   extras?: PaymentResponseExtras
 ): Response {
-  const normalizedFacilitator = facilitatorUrl ? normalizeFacilitatorUrl(facilitatorUrl) : DEFAULT_FACILITATOR_URL;
   const network = extras?.network ?? 'solana';
   const currencyCode = extras?.currencyCode ?? 'USDC';
   const assetAddress = extras?.assetAddress ?? null;
@@ -314,33 +222,16 @@ export function buildPaymentRequiredResponse(
   const expiresInSeconds = extras?.expiresInSeconds ?? 10 * 60;
   const expiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
 
-  const checkoutUrl = new URL('https://payai.network/pay');
-  checkoutUrl.searchParams.set('amount', requiredAmount.toString());
-  checkoutUrl.searchParams.set('recipient', receiverAddress);
-  checkoutUrl.searchParams.set('currency', currencyCode);
-  checkoutUrl.searchParams.set('network', network);
-  checkoutUrl.searchParams.set('facilitator', normalizedFacilitator);
-  checkoutUrl.searchParams.set('paymentId', paymentId);
-  checkoutUrl.searchParams.set('nonce', nonce);
-
-  if (extras?.groupName) {
-    checkoutUrl.searchParams.set('group', extras.groupName);
-  }
-
-  if (memo) {
-    checkoutUrl.searchParams.set('memo', memo);
-  }
-
   const body: Record<string, unknown> = {
     error: 'Payment Required',
     amount: requiredAmount,
     currency: currencyCode,
     recipient: receiverAddress,
     network,
-    facilitator: normalizedFacilitator,
-    checkoutUrl: checkoutUrl.toString(),
     instructions:
-      'Resubmit the request with the X-PAYMENT header after funding the transfer using an x402 facilitator.',
+      memo
+        ? `Send ${requiredAmount} ${currencyCode} on ${network} to ${receiverAddress} with memo "${memo}". Include the transaction signature in the X-PAYMENT-TXHASH header when resubmitting.`
+        : `Send ${requiredAmount} ${currencyCode} on ${network} to ${receiverAddress}. Include the transaction signature in the X-PAYMENT-TXHASH header when resubmitting.`,
     maxAmountRequired: requiredAmount,
     currencyCode,
     paymentAddress: receiverAddress,
@@ -360,24 +251,14 @@ export function buildPaymentRequiredResponse(
         amount: requiredAmount,
         recipient: receiverAddress,
         assetAddress: assetAddress ?? undefined,
-        assetType: assetType ?? undefined
-      },
-      {
-        scheme: 'facilitator',
-        facilitator: normalizedFacilitator,
-        url: checkoutUrl.toString(),
-        paymentId,
-        nonce
+        assetType: assetType ?? undefined,
+        memo: memo ?? undefined
       }
     ]
   };
 
   if (extras?.groupName) {
     body.groupName = extras.groupName;
-  }
-
-  if (memo) {
-    body.memo = memo;
   }
 
   const headers: Record<string, string> = {
@@ -387,15 +268,11 @@ export function buildPaymentRequiredResponse(
     'x-payment-currency': currencyCode,
     'x-payment-recipient': receiverAddress,
     'x-payment-network': network,
-    'x-payment-facilitator': normalizedFacilitator,
-    'x-payment-checkout': checkoutUrl.toString(),
     'x-402-required': 'true',
     'x-402-amount': requiredAmount.toString(),
     'x-402-currency': currencyCode,
     'x-402-recipient': receiverAddress,
     'x-402-network': network,
-    'x-402-facilitator': normalizedFacilitator,
-    'x-402-checkout': checkoutUrl.toString(),
     'x-payment-max-amount': requiredAmount.toString(),
     'x-payment-id': paymentId,
     'x-payment-nonce': nonce,
@@ -407,6 +284,7 @@ export function buildPaymentRequiredResponse(
   };
 
   if (memo) {
+    body.memo = memo;
     headers['x-payment-memo'] = memo;
     headers['x-402-memo'] = memo;
   }

@@ -24,8 +24,10 @@
 			"database_id": "c7203407-91b0-4830-8079-394f5d8e436e"
 		}
 	],
-	"vars": {
-		"FACILITATOR_URL": "https://facilitator.payai.network",
-		"TELEGRAM_WEBHOOK_URL": "https://x402-tg-auction-bot.cheron-augustin.workers.dev/api/telegram/webhook"
-	}
+        "vars": {
+                "TELEGRAM_WEBHOOK_URL": "https://x402-tg-auction-bot.cheron-augustin.workers.dev/api/telegram/webhook",
+                "SOLANA_RPC_URL": "https://api.mainnet-beta.solana.com",
+                "SOLANA_USDC_MINT_ADDRESS": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                "SOLANA_COMMITMENT": "confirmed"
+        }
 }
