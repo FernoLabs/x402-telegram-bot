@@ -270,10 +270,15 @@ export async function parsePayment(
 }
 
 interface PaymentResponseExtras {
-  currency?: string;
+  currencyCode?: string;
   network?: string;
   groupName?: string;
   memo?: string | null;
+  assetAddress?: string | null;
+  assetType?: string | null;
+  resource?: string | null;
+  description?: string | null;
+  expiresInSeconds?: number;
 }
 
 function sanitizeMemo(value: string | null | undefined): string | null {
@@ -297,15 +302,26 @@ export function buildPaymentRequiredResponse(
 ): Response {
   const normalizedFacilitator = facilitatorUrl ? normalizeFacilitatorUrl(facilitatorUrl) : DEFAULT_FACILITATOR_URL;
   const network = extras?.network ?? 'solana';
-  const currency = extras?.currency ?? 'USDC';
+  const currencyCode = extras?.currencyCode ?? 'USDC';
+  const assetAddress = extras?.assetAddress ?? null;
+  const assetType = extras?.assetType ?? null;
   const memo = sanitizeMemo(extras?.memo);
+  const resource = extras?.resource ?? '/api/auctions';
+  const description = extras?.description ??
+    `Payment required to post a message to ${extras?.groupName ?? 'the selected group'}.`;
+  const paymentId = typeof crypto?.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}`;
+  const nonce = typeof crypto?.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+  const expiresInSeconds = extras?.expiresInSeconds ?? 10 * 60;
+  const expiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
 
   const checkoutUrl = new URL('https://payai.network/pay');
   checkoutUrl.searchParams.set('amount', requiredAmount.toString());
   checkoutUrl.searchParams.set('recipient', receiverAddress);
-  checkoutUrl.searchParams.set('currency', currency);
+  checkoutUrl.searchParams.set('currency', currencyCode);
   checkoutUrl.searchParams.set('network', network);
   checkoutUrl.searchParams.set('facilitator', normalizedFacilitator);
+  checkoutUrl.searchParams.set('paymentId', paymentId);
+  checkoutUrl.searchParams.set('nonce', nonce);
 
   if (extras?.groupName) {
     checkoutUrl.searchParams.set('group', extras.groupName);
@@ -315,43 +331,98 @@ export function buildPaymentRequiredResponse(
     checkoutUrl.searchParams.set('memo', memo);
   }
 
-  const body = {
+  const body: Record<string, unknown> = {
     error: 'Payment Required',
     amount: requiredAmount,
-    currency,
+    currency: currencyCode,
     recipient: receiverAddress,
     network,
     facilitator: normalizedFacilitator,
     checkoutUrl: checkoutUrl.toString(),
     instructions:
       'Resubmit the request with the X-PAYMENT header after funding the transfer using an x402 facilitator.',
+    maxAmountRequired: requiredAmount,
+    currencyCode,
+    paymentAddress: receiverAddress,
+    assetAddress: assetAddress ?? undefined,
+    assetType: assetType ?? undefined,
+    networkId: network,
+    paymentId,
+    nonce,
+    expiresAt,
+    resource,
+    description,
     accepts: [
       {
         scheme: 'onchain-transfer',
         networkId: network,
-        currencyCode: currency,
+        currencyCode,
         amount: requiredAmount,
-        recipient: receiverAddress
+        recipient: receiverAddress,
+        assetAddress: assetAddress ?? undefined,
+        assetType: assetType ?? undefined
       },
       {
         scheme: 'facilitator',
         facilitator: normalizedFacilitator,
-        url: checkoutUrl.toString()
+        url: checkoutUrl.toString(),
+        paymentId,
+        nonce
       }
     ]
   };
 
+  if (extras?.groupName) {
+    body.groupName = extras.groupName;
+  }
+
+  if (memo) {
+    body.memo = memo;
+  }
+
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    'x-payment-required': 'true',
+    'x-payment-amount': requiredAmount.toString(),
+    'x-payment-currency': currencyCode,
+    'x-payment-recipient': receiverAddress,
+    'x-payment-network': network,
+    'x-payment-facilitator': normalizedFacilitator,
+    'x-payment-checkout': checkoutUrl.toString(),
+    'x-402-required': 'true',
+    'x-402-amount': requiredAmount.toString(),
+    'x-402-currency': currencyCode,
+    'x-402-recipient': receiverAddress,
+    'x-402-network': network,
+    'x-402-facilitator': normalizedFacilitator,
+    'x-402-checkout': checkoutUrl.toString(),
+    'x-payment-max-amount': requiredAmount.toString(),
+    'x-payment-id': paymentId,
+    'x-payment-nonce': nonce,
+    'x-payment-expires-at': expiresAt,
+    'x-402-max-amount': requiredAmount.toString(),
+    'x-402-payment-id': paymentId,
+    'x-402-nonce': nonce,
+    'x-402-expires-at': expiresAt
+  };
+
+  if (memo) {
+    headers['x-payment-memo'] = memo;
+    headers['x-402-memo'] = memo;
+  }
+
+  if (assetAddress) {
+    headers['x-payment-asset-address'] = assetAddress;
+    headers['x-402-asset-address'] = assetAddress;
+  }
+
+  if (assetType) {
+    headers['x-payment-asset-type'] = assetType;
+    headers['x-402-asset-type'] = assetType;
+  }
+
   return new Response(JSON.stringify(body), {
     status: 402,
-    headers: {
-      'content-type': 'application/json',
-      'x-payment-required': 'true',
-      'x-payment-amount': requiredAmount.toString(),
-      'x-payment-currency': currency,
-      'x-payment-recipient': receiverAddress,
-      'x-payment-network': network,
-      'x-payment-facilitator': normalizedFacilitator,
-      'x-payment-checkout': checkoutUrl.toString()
-    }
+    headers
   });
 }
