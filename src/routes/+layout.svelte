@@ -6,10 +6,9 @@
 
   const navLinks = [
     { href: '/', label: 'Overview' },
-    { href: '/groups', label: 'Group List' },
-    { href: '/send', label: 'Send Message' },
-    { href: '/admin', label: 'Group Admin' },
-    { href: '/setup', label: 'Setup Help' }
+    { href: '/setup', label: 'Setup Guide' },
+    { href: '/groups', label: 'Groups' },
+    { href: '/send', label: 'Send a Message' }
   ];
 </script>
 
@@ -19,7 +18,7 @@
 
 <div class="app-shell">
   <header>
-    <h1>Telegram Auction Console</h1>
+    <h1>x402 Telegram Console</h1>
     <nav aria-label="Main navigation">
       <ul>
         {#each navLinks as link}
