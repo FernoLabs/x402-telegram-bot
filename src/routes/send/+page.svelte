@@ -38,6 +38,33 @@
     groupName?: string;
   }
 
+  const DEFAULT_FACILITATOR_CHECKOUT_URL = 'https://facilitator.payai.network/pay';
+
+  const resolveFacilitatorCheckoutBase = (
+    facilitator: string | null,
+    checkout: string | null
+  ): URL => {
+    if (facilitator) {
+      try {
+        const facilitatorUrl = new URL(facilitator);
+        return new URL('/pay', facilitatorUrl);
+      } catch (parseError) {
+        console.warn('Invalid facilitator URL provided', parseError);
+      }
+    }
+
+    if (checkout) {
+      try {
+        const checkoutUrl = new URL(checkout);
+        return new URL('/pay', checkoutUrl);
+      } catch (parseError) {
+        console.warn('Invalid checkout URL provided', parseError);
+      }
+    }
+
+    return new URL(DEFAULT_FACILITATOR_CHECKOUT_URL);
+  };
+
   export let data: {
     groups: Group[];
     loadError: boolean;
@@ -281,12 +308,13 @@
   };
 
   function buildPaymentUrl(request: PaymentRequestData, group: Group | null, note: string): string {
-    const url = new URL('https://payai.network/pay');
+    const facilitator = resolveFacilitator(request);
+    const checkout = resolveCheckoutUrl(request);
+    const url = resolveFacilitatorCheckoutBase(facilitator, checkout);
     const amount = resolveAmount(request);
     const recipient = resolveRecipient(request);
     const currency = resolveCurrency(request);
     const network = resolveNetwork(request);
-    const facilitator = resolveFacilitator(request);
     const paymentId = resolvePaymentId(request);
     const nonce = resolveNonce(request);
 
