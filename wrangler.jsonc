@@ -24,5 +24,8 @@
 			"database_id": "c7203407-91b0-4830-8079-394f5d8e436e"
 		}
 	],
-   "vars": { "TELEGRAM_WEBHOOK_URL": "https://x402-tg-auction-bot.cheron-augustin.workers.dev/api/telegram/webhook" }
+	"vars": {
+		"FACILITATOR_URL": "https://facilitator.payai.network",
+		"TELEGRAM_WEBHOOK_URL": "https://x402-tg-auction-bot.cheron-augustin.workers.dev/api/telegram/webhook"
+	}
 }
