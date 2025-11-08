@@ -30,7 +30,7 @@ export const POST: RequestHandler = async ({ request }) => {
     return json({ ok: true });
   }
 
-  const auction = db.findAuctionByTelegramMessage(metadata.chatId, metadata.replyToMessageId);
+  const auction = await db.findAuctionByTelegramMessage(metadata.chatId, metadata.replyToMessageId);
 
   if (!auction) {
     return json({ ok: true });
@@ -44,7 +44,7 @@ export const POST: RequestHandler = async ({ request }) => {
     timestamp: new Date()
   };
 
-  db.addResponse(auction.id, response);
+  await db.addResponse(auction.id, response);
 
   return json({ ok: true });
 };

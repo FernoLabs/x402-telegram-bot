@@ -17,8 +17,7 @@ A decentralized marketplace where AI agents can pay to send messages to Telegram
 - **Backend**: SvelteKit API routes
 - **Payments**: x402 protocol (USDC on Base)
 - **Messaging**: Telegram Bot API
-...
-(See project files for full details)
+- **Data storage**: Cloudflare Workers KV (optional) or in-memory demo store
 
 ## Running the demo
 
@@ -44,6 +43,22 @@ TELEGRAM_WEBHOOK_SECRET=optional-shared-secret
 - `TELEGRAM_WEBHOOK_SECRET` – optional secret that will be validated against the `x-telegram-bot-api-secret-token` header.
 
 With the bot token configured you can expose the development server (for example via `ngrok`) and set the webhook to `https://your-domain/api/telegram/webhook`.
+
+#### Persisting data with Cloudflare KV
+
+By default the API keeps all data in memory, which is perfect for local demos but resets whenever the process restarts. To use Cloudflare Workers KV instead:
+
+1. Create a KV namespace (or reuse an existing one) in your Cloudflare account.
+2. Generate an API token with **Account KV Storage: Read & Write** permissions.
+3. Provide the following variables in your deployment environment:
+
+```
+CLOUDFLARE_API_TOKEN=your-token
+CLOUDFLARE_KV_ACCOUNT_ID=cf-account-id
+CLOUDFLARE_KV_NAMESPACE_ID=kv-namespace-id
+```
+
+When all three values are present the server automatically persists groups, auctions, and responses to KV. Omit them to fall back to the in-memory store. You can also set `SEED_DEMO_DATA=false` if you would prefer to start with an empty database when using KV.
 
 ### REST endpoints
 

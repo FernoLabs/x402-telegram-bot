@@ -9,12 +9,12 @@ export const GET: RequestHandler = async ({ params }) => {
     return json({ error: 'Invalid auction id' }, { status: 400 });
   }
 
-  const auction = db.getAuction(auctionId);
+  const auction = await db.getAuction(auctionId);
   if (!auction) {
     return json({ error: 'Auction not found' }, { status: 404 });
   }
 
-  return json(db.getResponses(auctionId));
+  return json(await db.getResponses(auctionId));
 };
 
 export const POST: RequestHandler = async ({ params, request }) => {
@@ -23,7 +23,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
     return json({ error: 'Invalid auction id' }, { status: 400 });
   }
 
-  const auction = db.getAuction(auctionId);
+  const auction = await db.getAuction(auctionId);
   if (!auction) {
     return json({ error: 'Auction not found' }, { status: 404 });
   }
@@ -42,7 +42,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
       timestamp: new Date()
     };
 
-    const updatedAuction = db.addResponse(auctionId, response);
+    const updatedAuction = await db.addResponse(auctionId, response);
 
     return json(updatedAuction?.responses ?? [], { status: 201 });
   } catch (error) {
