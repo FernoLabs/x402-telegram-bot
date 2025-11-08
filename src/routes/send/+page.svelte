@@ -1,4 +1,20 @@
 <script lang="ts">
+  import { walletStore } from '@svelte-on-solana/wallet-adapter-core';
+  import { workSpace } from '@svelte-on-solana/wallet-adapter-ui';
+  import {
+    LAMPORTS_PER_SOL,
+    PublicKey,
+    SystemProgram,
+    Transaction,
+    TransactionInstruction
+  } from '@solana/web3.js';
+  import {
+    createAssociatedTokenAccountInstruction,
+    createTransferInstruction,
+    getAssociatedTokenAddress,
+    getMint
+  } from '@solana/spl-token';
+  import { Buffer } from 'buffer';
   import type { Auction, Group } from '$lib/types';
 
   interface PaymentAcceptOption {
@@ -41,6 +57,8 @@
     createdAt: number;
   }
 
+  const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
+
   const DEFAULT_FACILITATOR_URL = 'https://facilitator.payai.network/pay';
 
   export let data: {
@@ -77,6 +95,15 @@
   let activePaymentId: string | null = null;
   let signatureInputs: Record<string, string> = {};
   let signatureErrors: Record<string, string | undefined> = {};
+  let walletProcessing = false;
+  let walletStatus: string | null = null;
+  let walletError: string | null = null;
+  let lastActivePaymentId: string | null = null;
+  let walletConnected = false;
+  let walletPublicKey: PublicKey | null = null;
+  let solanaConnection: import('@solana/web3.js').Connection | null = null;
+  let walletPaymentSupported = false;
+  let canUseWallet = false;
   const formatUsd = (value: number) => currencyFormatter.format(value);
 
   const formatAmountForCurrency = (value: number, currency: string): string => {
@@ -295,6 +322,28 @@
     return `/pay?${params.toString()}`;
   };
 
+  const isSupportedWalletPayment = (request: PaymentRequestData | null): boolean => {
+    if (!request) {
+      return false;
+    }
+
+    const network = resolveNetwork(request)?.toLowerCase();
+    if (network !== 'solana') {
+      return false;
+    }
+
+    const currency = resolveCurrency(request)?.toUpperCase() ?? 'USDC';
+    if (currency === 'SOL') {
+      return true;
+    }
+
+    if ((currency === 'USDC' || currency === 'USD') && request.assetAddress) {
+      return true;
+    }
+
+    return false;
+  };
+
   const parseSelectedGroupId = (value: string): number | null => {
     if (!value) {
       return null;
@@ -462,6 +511,153 @@
     }
   }
 
+  async function payWithWallet(): Promise<void> {
+    const wallet = $walletStore;
+    const workspace = $workSpace;
+    const request = activePayment;
+
+    if (!request) {
+      walletError = 'Select a payment request to continue.';
+      return;
+    }
+
+    if (!wallet?.connected || !wallet.publicKey) {
+      walletError = 'Connect a Solana wallet before paying.';
+      return;
+    }
+
+    if (!workspace?.connection) {
+      walletError = 'Wallet connection is still initializing. Try again in a moment.';
+      return;
+    }
+
+    if (!isSupportedWalletPayment(request)) {
+      walletError = 'This payment request cannot be settled with the in-browser wallet flow.';
+      return;
+    }
+
+    const amount = resolveAmount(request);
+    const recipientAddress = resolveRecipient(request);
+    const memo = resolveMemo(request);
+    const currency = (resolveCurrency(request) ?? 'USDC').toUpperCase();
+
+    if (amount === null || amount <= 0) {
+      walletError = 'The payment amount returned by the server is invalid.';
+      return;
+    }
+
+    if (!recipientAddress) {
+      walletError = 'The payment request is missing a recipient address.';
+      return;
+    }
+
+    walletError = null;
+    walletStatus = null;
+    walletProcessing = true;
+
+    try {
+      const connection = workspace.connection;
+      const latestBlockhash = await connection.getLatestBlockhash('confirmed');
+      const payer = wallet.publicKey;
+      const transaction = new Transaction({
+        feePayer: payer,
+        blockhash: latestBlockhash.blockhash,
+        lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
+      });
+
+      if (currency === 'SOL') {
+        let lamports = Math.round(amount * LAMPORTS_PER_SOL);
+        if (!Number.isFinite(lamports) || lamports <= 0) {
+          throw new Error('The SOL amount is too small to send.');
+        }
+
+        const recipient = new PublicKey(recipientAddress);
+        transaction.add(
+          SystemProgram.transfer({ fromPubkey: payer, toPubkey: recipient, lamports })
+        );
+      } else {
+        const mintAddress = request.assetAddress;
+        if (!mintAddress) {
+          throw new Error('This payment requires a token mint address.');
+        }
+
+        const mint = new PublicKey(mintAddress);
+        const payerAta = await getAssociatedTokenAddress(mint, payer);
+        const recipientWallet = new PublicKey(recipientAddress);
+        const recipientAta = await getAssociatedTokenAddress(mint, recipientWallet);
+
+        const payerAccountInfo = await connection.getAccountInfo(payerAta, 'confirmed');
+        if (!payerAccountInfo) {
+          transaction.add(
+            createAssociatedTokenAccountInstruction(payer, payerAta, payer, mint)
+          );
+        }
+
+        const recipientAccountInfo = await connection.getAccountInfo(recipientAta, 'confirmed');
+        if (!recipientAccountInfo) {
+          transaction.add(
+            createAssociatedTokenAccountInstruction(payer, recipientAta, recipientWallet, mint)
+          );
+        }
+
+        const mintInfo = await getMint(connection, mint);
+        const decimals = typeof mintInfo.decimals === 'number' ? mintInfo.decimals : 6;
+        const multiplier = Math.pow(10, decimals);
+        const baseUnits = BigInt(Math.round(amount * multiplier));
+
+        if (baseUnits <= 0n) {
+          throw new Error('The token amount is too small to transfer.');
+        }
+
+        transaction.add(
+          createTransferInstruction(payerAta, recipientAta, payer, baseUnits)
+        );
+      }
+
+      if (memo) {
+        const memoInstruction = new TransactionInstruction({
+          keys: [],
+          programId: MEMO_PROGRAM_ID,
+          data: Buffer.from(new TextEncoder().encode(memo))
+        });
+        transaction.add(memoInstruction);
+      }
+
+      const signature = await wallet.sendTransaction(transaction, connection, {
+        preflightCommitment: 'confirmed'
+      });
+
+      walletStatus = 'Transaction submitted. Awaiting confirmation…';
+
+      await connection.confirmTransaction(
+        {
+          signature,
+          blockhash: latestBlockhash.blockhash,
+          lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
+        },
+        'confirmed'
+      );
+
+      walletStatus = 'Transaction confirmed. Sending the receipt to the server…';
+      updateSignatureForActive(signature);
+      await requestPayment();
+
+      if (successAuction) {
+        walletStatus = 'Payment confirmed. Your message will be posted shortly.';
+      } else if (!error) {
+        walletStatus = 'Transaction confirmed. Awaiting server confirmation…';
+      }
+    } catch (walletException) {
+      console.error('Wallet payment failed', walletException);
+      walletError =
+        walletException instanceof Error
+          ? walletException.message
+          : 'Failed to process the wallet payment. Please try again.';
+    } finally {
+      walletProcessing = false;
+    }
+  }
+
   $: selectedGroup = findSelectedGroup(selectedGroupId);
   $: minimumBid = selectedGroup ? formatUsd(selectedGroup.minBid) : null;
   $: {
@@ -490,6 +686,19 @@
   $: submitButtonLabel = pendingPayments.length > 0 ? 'Submit payment confirmation' : 'Generate payment instructions';
   $: currentSignatureValue = activePaymentId ? signatureInputs[activePaymentId] ?? '' : '';
   $: currentSignatureError = activePaymentId ? signatureErrors[activePaymentId] ?? null : null;
+  $: walletConnected = $walletStore?.connected ?? false;
+  $: walletPublicKey = $walletStore?.publicKey ?? null;
+  $: solanaConnection = $workSpace?.connection ?? null;
+  $: walletPaymentSupported = isSupportedWalletPayment(activePayment);
+  $: canUseWallet = Boolean(
+    walletPaymentSupported && walletConnected && walletPublicKey && solanaConnection
+  );
+  $: if (activePaymentId !== lastActivePaymentId) {
+    walletError = null;
+    walletStatus = null;
+    walletProcessing = false;
+    lastActivePaymentId = activePaymentId;
+  }
 </script>
 
 <section class="page" aria-labelledby="send-title">
@@ -640,6 +849,34 @@
             {/if}
             {#if paymentInstructions}
               <p>{paymentInstructions}</p>
+            {/if}
+
+            {#if walletPaymentSupported}
+              <div class="wallet-settlement" aria-live="polite">
+                <button
+                  type="button"
+                  class="wallet-pay-button"
+                  on:click={payWithWallet}
+                  disabled={walletProcessing || loading || !canUseWallet}
+                >
+                  {#if walletProcessing}
+                    Paying with wallet…
+                  {:else if !walletConnected}
+                    Connect a wallet to pay
+                  {:else}
+                    Pay with connected wallet
+                  {/if}
+                </button>
+                {#if !walletConnected}
+                  <p class="wallet-hint">Use the wallet button in the header to connect.</p>
+                {/if}
+                {#if walletError}
+                  <p class="wallet-error">{walletError}</p>
+                {/if}
+                {#if walletStatus}
+                  <p class="wallet-status">{walletStatus}</p>
+                {/if}
+              </div>
             {/if}
 
             <label class="signature-field">
@@ -899,6 +1136,48 @@
     color: #0f172a;
     opacity: 0.8;
     font-size: 0.85rem;
+  }
+
+  .wallet-settlement {
+    display: grid;
+    gap: 0.5rem;
+    margin: 0.5rem 0 0;
+  }
+
+  .wallet-pay-button {
+    justify-self: start;
+    padding: 0.55rem 1.25rem;
+    border: none;
+    border-radius: 10px;
+    background: #2563eb;
+    color: #fff;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .wallet-pay-button[disabled] {
+    background: #94a3b8;
+    cursor: not-allowed;
+  }
+
+  .wallet-hint {
+    margin: 0;
+    font-size: 0.9rem;
+    color: #475569;
+  }
+
+  .wallet-error {
+    margin: 0;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #b91c1c;
+  }
+
+  .wallet-status {
+    margin: 0;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #047857;
   }
 
   .payload-error {
