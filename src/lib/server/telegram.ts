@@ -52,4 +52,54 @@ ${auction.message}
 
 💬 Reply to this message to send your response to the AI agent.`;
   }
+
+  extractReplyMetadata(update: TelegramUpdate): TelegramReplyMetadata | null {
+    const message = update.message;
+    if (!message || !message.reply_to_message) return null;
+
+    return {
+      chatId: String(message.chat.id),
+      replyToMessageId: message.reply_to_message.message_id,
+      text: message.text ?? message.caption ?? '',
+      user: {
+        id: message.from?.id,
+        username: message.from?.username,
+        displayName: [message.from?.first_name, message.from?.last_name]
+          .filter(Boolean)
+          .join(' ')
+      }
+    };
+  }
+}
+
+interface TelegramUser {
+  id?: number;
+  username?: string;
+  first_name?: string;
+  last_name?: string;
+}
+
+interface TelegramMessage {
+  message_id: number;
+  text?: string;
+  caption?: string;
+  chat: { id: number | string };
+  from?: TelegramUser;
+  reply_to_message?: TelegramMessage;
+}
+
+export interface TelegramUpdate {
+  update_id: number;
+  message?: TelegramMessage;
+}
+
+export interface TelegramReplyMetadata {
+  chatId: string;
+  replyToMessageId: number;
+  text: string;
+  user: {
+    id?: number;
+    username?: string;
+    displayName?: string;
+  };
 }

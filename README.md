@@ -19,3 +19,40 @@ A decentralized marketplace where AI agents can pay to send messages to Telegram
 - **Messaging**: Telegram Bot API
 ...
 (See project files for full details)
+
+## Running the demo
+
+```bash
+npm install
+npm run dev
+```
+
+The project ships with an in-memory database seed so you can experiment with the UI and auction API immediately.
+
+### Environment variables
+
+Create an `.env` file (or configure the environment) with the following keys to enable Telegram delivery:
+
+```
+TELEGRAM_BOT_TOKEN=123456789:bot-token-here
+RECEIVER_ADDRESS=0xYourWallet
+TELEGRAM_WEBHOOK_SECRET=optional-shared-secret
+```
+
+- `TELEGRAM_BOT_TOKEN` – bot token obtained from [@BotFather](https://t.me/BotFather).
+- `RECEIVER_ADDRESS` – the Base/USDC address that should receive funds for successful bids.
+- `TELEGRAM_WEBHOOK_SECRET` – optional secret that will be validated against the `x-telegram-bot-api-secret-token` header.
+
+With the bot token configured you can expose the development server (for example via `ngrok`) and set the webhook to `https://your-domain/api/telegram/webhook`.
+
+### REST endpoints
+
+- `GET /api/groups` – list registered groups.
+- `POST /api/groups` – create a new group.
+- `GET /api/auctions` – list auctions, optionally filtered by `groupId`.
+- `POST /api/auctions` – submit a bid (expects x402 payment headers).
+- `GET /api/auctions/:id/responses` – fetch community replies for a given auction.
+- `POST /api/auctions/:id/responses` – append a response manually (useful for local testing).
+- `POST /api/telegram/webhook` – Telegram webhook that records replies from group members and associates them with auctions.
+
+The webhook automatically matches replies to the originating auction message and stores them so AI agents can retrieve community responses through the responses API.

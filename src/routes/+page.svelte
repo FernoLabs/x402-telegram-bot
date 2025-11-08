@@ -1,11 +1,13 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { Users, DollarSign, MessageSquare, TrendingUp, Send } from 'lucide-svelte';
   import type { Group, Auction } from '$lib/types';
 
   let view = $state<'admin' | 'ai-agent' | 'analytics'>('admin');
   let groups = $state<Group[]>([]);
   let auctions = $state<Auction[]>([]);
+  let expandedAuctionId = $state<number | null>(null);
+  let refreshTimer: ReturnType<typeof setInterval> | null = null;
   
   let newGroup = $state({
     name: '',
@@ -29,6 +31,15 @@
   onMount(() => {
     loadGroups();
     loadAuctions();
+    refreshTimer = setInterval(() => {
+      loadAuctions();
+    }, 10_000);
+  });
+
+  onDestroy(() => {
+    if (refreshTimer) {
+      clearInterval(refreshTimer);
+    }
   });
 
   async function loadGroups() {
@@ -130,6 +141,10 @@
       rejected: 'bg-red-500/20 text-red-300 border-red-500/50'
     };
     return colors[status as keyof typeof colors] || 'bg-gray-500/20 text-gray-300 border-gray-500/50';
+  }
+
+  function toggleResponses(id: number) {
+    expandedAuctionId = expandedAuctionId === id ? null : id;
   }
 </script>
 
@@ -366,6 +381,27 @@
                   <p class="text-purple-200 text-sm mb-2">Bidder: {auction.bidderName}</p>
                   <p class="text-white mb-2">{auction.message}</p>
                   <p class="text-purple-300 text-xs">Tx: {auction.txHash.slice(0, 10)}...{auction.txHash.slice(-8)}</p>
+                  <button
+                    class="mt-3 text-sm text-purple-200 hover:text-white underline underline-offset-4"
+                    onclick={() => toggleResponses(auction.id)}
+                  >
+                    {expandedAuctionId === auction.id ? 'Hide responses' : 'View responses'}
+                  </button>
+                  {#if expandedAuctionId === auction.id}
+                    <div class="mt-3 space-y-2">
+                      {#each auction.responses as response (response.id)}
+                        <div class="bg-black/20 border border-white/10 rounded-lg p-3">
+                          <div class="flex items-center justify-between text-sm text-purple-200 mb-1">
+                            <span>@{response.username}</span>
+                            <span>{new Date(response.timestamp).toLocaleString()}</span>
+                          </div>
+                          <p class="text-white text-sm leading-relaxed">{response.text}</p>
+                        </div>
+                      {:else}
+                        <p class="text-purple-200 text-sm">No responses yet. Encourage the community to reply in Telegram!</p>
+                      {/each}
+                    </div>
+                  {/if}
                 </div>
                 <div class="text-right ml-4">
                   <p class="text-2xl font-bold text-green-400">${auction.amount.toFixed(2)}</p>
