@@ -98,7 +98,12 @@ export const POST: RequestHandler = async ({ request, platform }) => {
     });
 
     if (!payment || payment.amount < group.minBid || payment.amount <= 0) {
-      return buildPaymentRequiredResponse(group.minBid, receiver, facilitatorUrl);
+      return buildPaymentRequiredResponse(group.minBid, receiver, facilitatorUrl, {
+        currency,
+        network,
+        groupName: group.name,
+        memo: message
+      });
     }
 
     const auction = await repo.createAuction({

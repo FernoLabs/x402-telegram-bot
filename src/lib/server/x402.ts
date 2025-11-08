@@ -5,6 +5,7 @@ const SENDER_HEADERS = ['x-402-sender', 'x-payment-sender'];
 const TX_HASH_HEADERS = ['x-402-tx-hash', 'x-payment-txhash'];
 const NETWORK_HEADERS = ['x-402-network', 'x-payment-network'];
 const PAYMENT_PAYLOAD_HEADER = 'x-payment';
+const FACILITATOR_HEADERS = ['x-payment-facilitator', 'x-402-facilitator'];
 const DEFAULT_FACILITATOR_URL = 'https://facilitator.payai.network';
 
 interface PaymentValidationOptions {
@@ -249,7 +250,11 @@ export async function parsePayment(
     return null;
   }
 
-  const facilitatorUrl = options.facilitatorUrl ?? DEFAULT_FACILITATOR_URL;
+  const facilitatorOverride = readHeader(request, FACILITATOR_HEADERS);
+  const facilitatorUrl =
+    facilitatorOverride && facilitatorOverride.trim().length > 0
+      ? facilitatorOverride
+      : options.facilitatorUrl ?? DEFAULT_FACILITATOR_URL;
   const result = await verifyWithFacilitator(encodedPayload, options.paymentDetails, facilitatorUrl);
   if (!result) {
     return null;
@@ -264,14 +269,51 @@ export async function parsePayment(
   };
 }
 
+interface PaymentResponseExtras {
+  currency?: string;
+  network?: string;
+  groupName?: string;
+  memo?: string | null;
+}
+
+function sanitizeMemo(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const compact = value.replace(/\s+/g, ' ').trim();
+  if (!compact) {
+    return null;
+  }
+
+  return compact.slice(0, 120);
+}
+
 export function buildPaymentRequiredResponse(
   requiredAmount: number,
   receiverAddress: string,
-  facilitatorUrl?: string | null
+  facilitatorUrl?: string | null,
+  extras?: PaymentResponseExtras
 ): Response {
   const normalizedFacilitator = facilitatorUrl ? normalizeFacilitatorUrl(facilitatorUrl) : DEFAULT_FACILITATOR_URL;
-  const network = 'solana';
-  const currency = 'USDC';
+  const network = extras?.network ?? 'solana';
+  const currency = extras?.currency ?? 'USDC';
+  const memo = sanitizeMemo(extras?.memo);
+
+  const checkoutUrl = new URL('https://www.x402.org/pay');
+  checkoutUrl.searchParams.set('amount', requiredAmount.toString());
+  checkoutUrl.searchParams.set('recipient', receiverAddress);
+  checkoutUrl.searchParams.set('currency', currency);
+  checkoutUrl.searchParams.set('network', network);
+  checkoutUrl.searchParams.set('facilitator', normalizedFacilitator);
+
+  if (extras?.groupName) {
+    checkoutUrl.searchParams.set('group', extras.groupName);
+  }
+
+  if (memo) {
+    checkoutUrl.searchParams.set('memo', memo);
+  }
 
   const body = {
     error: 'Payment Required',
@@ -280,6 +322,7 @@ export function buildPaymentRequiredResponse(
     recipient: receiverAddress,
     network,
     facilitator: normalizedFacilitator,
+    checkoutUrl: checkoutUrl.toString(),
     instructions:
       'Resubmit the request with the X-PAYMENT header after funding the transfer using an x402 facilitator.',
     accepts: [
@@ -289,6 +332,11 @@ export function buildPaymentRequiredResponse(
         currencyCode: currency,
         amount: requiredAmount,
         recipient: receiverAddress
+      },
+      {
+        scheme: 'facilitator',
+        facilitator: normalizedFacilitator,
+        url: checkoutUrl.toString()
       }
     ]
   };
@@ -302,7 +350,8 @@ export function buildPaymentRequiredResponse(
       'x-payment-currency': currency,
       'x-payment-recipient': receiverAddress,
       'x-payment-network': network,
-      'x-payment-facilitator': normalizedFacilitator
+      'x-payment-facilitator': normalizedFacilitator,
+      'x-payment-checkout': checkoutUrl.toString()
     }
   });
 }
