@@ -7,6 +7,7 @@ This project implements a paid-message auction workflow for Telegram groups. AI 
 - Cloudflare Worker deployment with SvelteKit and Wrangler
 - D1-backed storage for groups, auctions, and threaded responses
 - x402-style payment enforcement (HTTP 402 responses with recipient metadata)
+- Browser wallet checkout for completing Solana USDC payments without a facilitator
 - Telegram bot helpers for setting the webhook and posting auction winners
 - Webhook handler that records replies and associates them with auctions
 
@@ -40,6 +41,15 @@ This project implements a paid-message auction workflow for Telegram groups. AI 
 
 4. **Set non-sensitive variables** (optional)
    Edit `wrangler.jsonc` or use `wrangler secret put TELEGRAM_WEBHOOK_URL` to define the public webhook endpoint (e.g. `https://your-worker.example.com/api/telegram/webhook`).
+   Provide the Solana RPC settings that the worker should query when verifying payments:
+   ```bash
+   wrangler secret put SOLANA_RPC_URL               # defaults to https://api.mainnet-beta.solana.com
+   wrangler secret put SOLANA_USDC_MINT_ADDRESS     # defaults to the mainnet USDC mint
+   wrangler secret put SOLANA_COMMITMENT            # optional: processed, confirmed, or finalized
+   ```
+
+   The worker reuses these Solana RPC settings to serve helper endpoints consumed by the Svelte wallet flow, so no additional
+   Vite environment variables are required on the front-end.
 
 ## Running locally
 
@@ -62,6 +72,10 @@ wrangler dev
 | `/api/groups` | `POST` | Register a new group (name, telegramId, minBid, ownerAddress) |
 | `/api/auctions` | `GET` | List auctions, optionally filtered with `?groupId=` |
 | `/api/auctions` | `POST` | Submit a paid auction message (requires x402 headers) |
+| `/api/solana/blockhash` | `GET` | Fetch the latest blockhash and last valid block height |
+| `/api/solana/mint/[mint]` | `GET` | Return SPL token metadata (currently decimals) |
+| `/api/solana/account/[address]` | `GET` | Determine whether an account exists |
+| `/api/solana/submit` | `POST` | Relay a signed transaction to Solana RPC |
 | `/api/telegram/webhook` | `POST` | Telegram webhook endpoint for message replies |
 | `/api/telegram/setup` | `POST` | Call Telegram `setWebhook` using configured URL/secret |
 | `/api/telegram/setup` | `DELETE` | Remove the Telegram webhook |
@@ -78,10 +92,7 @@ x-payment-txhash: 0xtransactionhash
 
 The worker returns an HTTP 402 response with the recipient address and amount when additional payment is required.
 
-Responses now follow the [x402 facilitator](https://docs.payai.network/x402) format and include an `accepts` array, a `checkoutUrl`
-that deep-links to the hosted payer experience (`https://payai.network/pay?...&facilitator=...`), plus the `x-payment` header metadata
-clients need to construct a Payment Payload. Set the `FACILITATOR_URL` environment variable (defaults to the PayAI facilitator) to
-verify payments via `/verify` before the bot posts messages.
+Responses return structured x402 metadata describing the on-chain transfer that must be completed. The `/send` page now lists every outstanding payment request, lets operators connect a Solana wallet (Phantom, Solflare, Coinbase, Trust, or Torus), and can generate and submit the transfer directly through the browser. After submitting a Solana transaction—either manually or via the built-in wallet flow—resubmit the request with the transaction signature in the `x-payment-txhash` header so the worker can verify the transfer directly against Solana RPC.
 
 ## Telegram webhook flow
 

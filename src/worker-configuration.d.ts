@@ -11,9 +11,11 @@ declare namespace Cloudflare {
                 TELEGRAM_BOT_USERNAME?: string;
                 TELEGRAM_BOT_ID?: string;
                 RECEIVER_ADDRESS?: string;
-                FACILITATOR_URL?: string;
                 PAYMENT_CURRENCY?: string;
                 PAYMENT_NETWORK?: string;
+                SOLANA_RPC_URL?: string;
+                SOLANA_USDC_MINT_ADDRESS?: string;
+                SOLANA_COMMITMENT?: 'processed' | 'confirmed' | 'finalized';
         }
 }
 interface Env extends Cloudflare.Env {}
