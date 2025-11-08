@@ -26,6 +26,16 @@ npm install
 npm run dev
 ```
 
+To emulate the Cloudflare Pages runtime locally you can run:
+
+```bash
+npm run cf:dev
+```
+
+(Requires the Wrangler CLI, which is installed as a dev dependency.)
+
+The repository intentionally omits a package lock so Cloudflare Pages can resolve dependencies during builds. You can generate a local lock file with `npm install` if you need reproducible installs for development.
+
 The project ships with an in-memory database seed so you can experiment with the UI and auction API immediately.
 
 ### Environment variables

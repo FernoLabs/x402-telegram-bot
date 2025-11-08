@@ -20,32 +20,35 @@ echo "→ Writing files..."
 # ---------------------------
 cat > package.json <<'EOF'
 {
-  "name": "ai-auction-telegram",
-  "version": "1.0.0",
+  "name": "x402-telegram-bot",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite dev",
+    "dev": "vite dev --host",
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch"
+    "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+    "cf:dev": "wrangler pages dev .svelte-kit/cloudflare -- npm run build"
   },
   "devDependencies": {
-    "@sveltejs/adapter-auto": "^3.0.0",
-    "@sveltejs/kit": "^2.0.0",
+    "@sveltejs/adapter-cloudflare": "^4.0.0",
+    "@sveltejs/kit": "^2.7.0",
     "@sveltejs/vite-plugin-svelte": "^4.0.0",
     "@types/node": "^20.10.0",
     "autoprefixer": "^10.4.16",
     "postcss": "^8.4.32",
+    "postcss-load-config": "5.1.0",
     "svelte": "^5.0.0",
     "svelte-check": "^3.6.0",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.3.0",
-    "vite": "^5.0.0"
+    "vite": "^5.0.0",
+    "wrangler": "^3.75.0"
   },
   "dependencies": {
-    "lucide-svelte": "^0.298.0"
+    "lucide-svelte": "0.553.0"
   }
 }
 EOF
@@ -54,7 +57,7 @@ EOF
 # svelte.config.js
 # ---------------------------
 cat > svelte.config.js <<'EOF'
-import adapter from '@sveltejs/adapter-auto';
+import adapter from '@sveltejs/adapter-cloudflare';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 
 /** @type {import('@sveltejs/kit').Config} */
