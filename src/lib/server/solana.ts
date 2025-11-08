@@ -73,6 +73,8 @@ interface RpcGetTransactionResult {
   blockTime: number | null;
 }
 
+export type SolanaCommitment = 'processed' | 'confirmed' | 'finalized';
+
 interface VerifySolanaPaymentOptions {
   signature: string;
   rpcUrl?: string;
@@ -80,7 +82,7 @@ interface VerifySolanaPaymentOptions {
   minAmount: number;
   expectedCurrency?: string | null;
   tokenMintAddress?: string | null;
-  commitment?: 'processed' | 'confirmed' | 'finalized';
+  commitment?: SolanaCommitment;
 }
 
 interface VerifiedPaymentDetails extends PaymentDetails {
@@ -88,10 +90,60 @@ interface VerifiedPaymentDetails extends PaymentDetails {
   blockTime: number | null;
 }
 
-const DEFAULT_SOLANA_RPC_URL = 'https://api.mainnet-beta.solana.com';
+export const DEFAULT_SOLANA_RPC_URL = 'https://api.mainnet-beta.solana.com';
 const DEFAULT_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const LAMPORTS_PER_SOL = 1_000_000_000;
 const EPSILON = 1e-7;
+
+interface RpcCallOptions {
+  rpcUrl?: string;
+}
+
+interface RpcCommitmentOptions extends RpcCallOptions {
+  commitment?: SolanaCommitment;
+}
+
+export function normalizeCommitment(value: string | null | undefined): SolanaCommitment {
+  if (value === 'processed' || value === 'finalized') {
+    return value;
+  }
+  return 'confirmed';
+}
+
+async function callSolanaRpc<T>(
+  method: string,
+  params: unknown[],
+  options?: RpcCallOptions
+): Promise<T | null> {
+  const rpcUrl = options?.rpcUrl ?? DEFAULT_SOLANA_RPC_URL;
+
+  try {
+    const response = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify(buildRpcRequest(method, params))
+    });
+
+    if (!response.ok) {
+      console.warn(`Solana RPC request failed: ${response.status} ${response.statusText}`);
+      return null;
+    }
+
+    const payload = (await response.json()) as JsonRpcResponse<T>;
+
+    if (payload.error) {
+      console.warn('Solana RPC responded with an error', payload.error);
+      return null;
+    }
+
+    return payload.result ?? null;
+  } catch (error) {
+    console.error('Failed to call Solana RPC', error);
+    return null;
+  }
+}
 
 function buildRpcRequest(method: string, params: unknown[]): JsonRpcRequest {
   const id = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -309,4 +361,116 @@ export async function verifySolanaPayment(options: VerifySolanaPaymentOptions): 
     slot: result.slot,
     blockTime: result.blockTime
   };
+}
+
+export interface LatestBlockhash {
+  blockhash: string;
+  lastValidBlockHeight: number;
+}
+
+export async function fetchLatestBlockhash(
+  options?: RpcCommitmentOptions
+): Promise<LatestBlockhash | null> {
+  const config: Record<string, unknown> = {};
+
+  if (options?.commitment) {
+    config.commitment = options.commitment;
+  }
+
+  const response = await callSolanaRpc<{
+    context: { slot: number };
+    value: LatestBlockhash;
+  }>('getLatestBlockhash', [config], { rpcUrl: options?.rpcUrl });
+
+  if (!response || !response.value?.blockhash) {
+    return null;
+  }
+
+  return response.value;
+}
+
+export async function fetchMintDecimals(
+  mintAddress: string,
+  options?: RpcCommitmentOptions
+): Promise<number | null> {
+  if (!mintAddress) {
+    return null;
+  }
+
+  const config: Record<string, unknown> = {};
+
+  if (options?.commitment) {
+    config.commitment = options.commitment;
+  }
+
+  const response = await callSolanaRpc<{
+    context: { slot: number };
+    value: { amount: string; decimals: number };
+  }>('getTokenSupply', [mintAddress, config], { rpcUrl: options?.rpcUrl });
+
+  if (!response || typeof response.value?.decimals !== 'number') {
+    return null;
+  }
+
+  return response.value.decimals;
+}
+
+export async function fetchAccountExists(
+  address: string,
+  options?: RpcCommitmentOptions
+): Promise<boolean> {
+  if (!address) {
+    return false;
+  }
+
+  const config: Record<string, unknown> = { encoding: 'base64' };
+
+  if (options?.commitment) {
+    config.commitment = options.commitment;
+  }
+
+  const response = await callSolanaRpc<{
+    context: { slot: number };
+    value: unknown | null;
+  }>('getAccountInfo', [address, config], { rpcUrl: options?.rpcUrl });
+
+  return !!response?.value;
+}
+
+interface SubmitTransactionOptions extends RpcCommitmentOptions {
+  skipPreflight?: boolean;
+  maxRetries?: number;
+}
+
+export async function submitSignedTransaction(
+  serializedTransaction: string,
+  options?: SubmitTransactionOptions
+): Promise<string | null> {
+  if (!serializedTransaction) {
+    return null;
+  }
+
+  const config: Record<string, unknown> = {
+    skipPreflight: options?.skipPreflight ?? false
+  };
+
+  if (options?.commitment) {
+    config.preflightCommitment = options.commitment;
+  }
+
+  if (typeof options?.maxRetries === 'number') {
+    config.maxRetries = options.maxRetries;
+  }
+
+  const response = await callSolanaRpc<string>(
+    'sendRawTransaction',
+    [serializedTransaction, config],
+    { rpcUrl: options?.rpcUrl }
+  );
+
+  if (!response || typeof response !== 'string') {
+    return null;
+  }
+
+  return response;
 }

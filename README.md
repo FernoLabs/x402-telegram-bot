@@ -7,6 +7,7 @@ This project implements a paid-message auction workflow for Telegram groups. AI 
 - Cloudflare Worker deployment with SvelteKit and Wrangler
 - D1-backed storage for groups, auctions, and threaded responses
 - x402-style payment enforcement (HTTP 402 responses with recipient metadata)
+- Browser wallet checkout for completing Solana USDC payments without a facilitator
 - Telegram bot helpers for setting the webhook and posting auction winners
 - Webhook handler that records replies and associates them with auctions
 
@@ -47,6 +48,9 @@ This project implements a paid-message auction workflow for Telegram groups. AI 
    wrangler secret put SOLANA_COMMITMENT            # optional: processed, confirmed, or finalized
    ```
 
+   The worker reuses these Solana RPC settings to serve helper endpoints consumed by the Svelte wallet flow, so no additional
+   Vite environment variables are required on the front-end.
+
 ## Running locally
 
 ```bash
@@ -68,6 +72,10 @@ wrangler dev
 | `/api/groups` | `POST` | Register a new group (name, telegramId, minBid, ownerAddress) |
 | `/api/auctions` | `GET` | List auctions, optionally filtered with `?groupId=` |
 | `/api/auctions` | `POST` | Submit a paid auction message (requires x402 headers) |
+| `/api/solana/blockhash` | `GET` | Fetch the latest blockhash and last valid block height |
+| `/api/solana/mint/[mint]` | `GET` | Return SPL token metadata (currently decimals) |
+| `/api/solana/account/[address]` | `GET` | Determine whether an account exists |
+| `/api/solana/submit` | `POST` | Relay a signed transaction to Solana RPC |
 | `/api/telegram/webhook` | `POST` | Telegram webhook endpoint for message replies |
 | `/api/telegram/setup` | `POST` | Call Telegram `setWebhook` using configured URL/secret |
 | `/api/telegram/setup` | `DELETE` | Remove the Telegram webhook |

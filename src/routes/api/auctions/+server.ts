@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { AuctionRepository } from '$lib/server/db';
 import { parsePayment, buildPaymentRequiredResponse } from '$lib/server/x402';
+import { normalizeCommitment } from '$lib/server/solana';
 import { TelegramBot } from '$lib/server/telegram';
 
 function escapeHtml(value: string): string {
@@ -87,12 +88,7 @@ export const POST: RequestHandler = async ({ request, platform }) => {
     const network = env.PAYMENT_NETWORK ?? 'solana';
     const solanaRpcUrl = env.SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com';
     const solanaMint = env.SOLANA_USDC_MINT_ADDRESS ?? null;
-    const solanaCommitment =
-      env.SOLANA_COMMITMENT === 'processed' ||
-      env.SOLANA_COMMITMENT === 'finalized' ||
-      env.SOLANA_COMMITMENT === 'confirmed'
-        ? env.SOLANA_COMMITMENT
-        : 'confirmed';
+    const solanaCommitment = normalizeCommitment(env.SOLANA_COMMITMENT);
 
     const payment = await parsePayment(request, {
       paymentDetails: {
@@ -115,7 +111,9 @@ export const POST: RequestHandler = async ({ request, platform }) => {
         groupName: group.name,
         memo: message,
         resource: 'POST /api/auctions',
-        description: `Send ${currency} on ${network} to publish a paid message in ${group.name}.`
+        description: `Send ${currency} on ${network} to publish a paid message in ${group.name}.`,
+        assetAddress: solanaMint ?? undefined,
+        assetType: solanaMint ? 'spl-token' : undefined
       });
     }
 
