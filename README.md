@@ -40,6 +40,12 @@ This project implements a paid-message auction workflow for Telegram groups. AI 
 
 4. **Set non-sensitive variables** (optional)
    Edit `wrangler.jsonc` or use `wrangler secret put TELEGRAM_WEBHOOK_URL` to define the public webhook endpoint (e.g. `https://your-worker.example.com/api/telegram/webhook`).
+   Provide the Solana RPC settings that the worker should query when verifying payments:
+   ```bash
+   wrangler secret put SOLANA_RPC_URL               # defaults to https://api.mainnet-beta.solana.com
+   wrangler secret put SOLANA_USDC_MINT_ADDRESS     # defaults to the mainnet USDC mint
+   wrangler secret put SOLANA_COMMITMENT            # optional: processed, confirmed, or finalized
+   ```
 
 ## Running locally
 
@@ -78,10 +84,9 @@ x-payment-txhash: 0xtransactionhash
 
 The worker returns an HTTP 402 response with the recipient address and amount when additional payment is required.
 
-Responses now follow the [x402 facilitator](https://docs.payai.network/x402) format and include an `accepts` array, a `checkoutUrl`
-that deep-links to the hosted payer experience (`https://payai.network/pay?...&facilitator=...`), plus the `x-payment` header metadata
-clients need to construct a Payment Payload. Set the `FACILITATOR_URL` environment variable (defaults to the PayAI facilitator) to
-verify payments via `/verify` before the bot posts messages.
+Responses return structured x402 metadata describing the on-chain transfer that must be completed. After submitting a Solana
+transaction, resubmit the request with the transaction signature in the `x-payment-txhash` header so the worker can verify the
+transfer directly against Solana RPC.
 
 ## Telegram webhook flow
 

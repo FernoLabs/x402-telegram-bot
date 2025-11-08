@@ -83,22 +83,33 @@ export const POST: RequestHandler = async ({ request, platform }) => {
     }
 
     const receiver = env.RECEIVER_ADDRESS ?? group.ownerAddress;
-    const facilitatorUrl = env.FACILITATOR_URL ?? null;
     const currency = env.PAYMENT_CURRENCY ?? 'USDC';
     const network = env.PAYMENT_NETWORK ?? 'solana';
+    const solanaRpcUrl = env.SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com';
+    const solanaMint = env.SOLANA_USDC_MINT_ADDRESS ?? null;
+    const solanaCommitment =
+      env.SOLANA_COMMITMENT === 'processed' ||
+      env.SOLANA_COMMITMENT === 'finalized' ||
+      env.SOLANA_COMMITMENT === 'confirmed'
+        ? env.SOLANA_COMMITMENT
+        : 'confirmed';
 
     const payment = await parsePayment(request, {
-      facilitatorUrl,
       paymentDetails: {
         amount: group.minBid,
         currency,
         recipient: receiver,
         network
+      },
+      solana: {
+        rpcUrl: solanaRpcUrl,
+        tokenMintAddress: solanaMint,
+        commitment: solanaCommitment
       }
     });
 
     if (!payment || payment.amount < group.minBid || payment.amount <= 0) {
-      return buildPaymentRequiredResponse(group.minBid, receiver, facilitatorUrl, {
+      return buildPaymentRequiredResponse(group.minBid, receiver, {
         currencyCode: currency,
         network,
         groupName: group.name,
