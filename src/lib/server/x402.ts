@@ -1,5 +1,5 @@
 import type { PaymentDetails } from '$lib/types';
-import { verifySolanaPayment } from './solana';
+import { verifySolanaPayment, verifyWireTransactionSignature } from './solana';
 
 const AMOUNT_HEADERS = ['x-402-amount', 'x-payment-amount'];
 const SENDER_HEADERS = ['x-402-sender', 'x-payment-sender'];
@@ -96,6 +96,28 @@ function extractTxHash(payload: Record<string, unknown>): string | null {
   return null;
 }
 
+function extractWireTransaction(payload: Record<string, unknown>): string | null {
+  const candidateKeys = ['transaction', 'wireTransaction', 'serializedTransaction'];
+  for (const key of candidateKeys) {
+    const value = payload[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value;
+    }
+  }
+
+  const nested = payload.payment;
+  if (nested && typeof nested === 'object') {
+    for (const key of candidateKeys) {
+      const value = (nested as Record<string, unknown>)[key];
+      if (typeof value === 'string' && value.trim()) {
+        return value;
+      }
+    }
+  }
+
+  return null;
+}
+
 export async function parsePayment(
   request: Request,
   options?: PaymentValidationOptions
@@ -134,12 +156,28 @@ export async function parsePayment(
   }
 
   const txHashFromPayload = payload ? extractTxHash(payload) : null;
+  const wireTransaction = payload ? extractWireTransaction(payload) : null;
   const txHash = txHashFromPayload ?? legacy.txHash;
 
   const expectedNetwork = options.paymentDetails.network?.toLowerCase();
   const expectedCurrency = options.paymentDetails.currency?.toUpperCase();
 
   if (expectedNetwork === 'solana' && txHash) {
+    const senderFromPayload = payload ? extractSender(payload) : null;
+    let wireSignatureVerification: Awaited<ReturnType<typeof verifyWireTransactionSignature>> | null = null;
+
+    if (wireTransaction) {
+      wireSignatureVerification = await verifyWireTransactionSignature({
+        wireTransaction,
+        expectedSignature: txHash,
+        expectedSigner: senderFromPayload ?? legacy.sender
+      });
+
+      if (!wireSignatureVerification) {
+        return null;
+      }
+    }
+
     const verification = await verifySolanaPayment({
       signature: txHash,
       rpcUrl: options.solana?.rpcUrl,
@@ -154,8 +192,16 @@ export async function parsePayment(
       return null;
     }
 
-    const senderFromPayload = payload ? extractSender(payload) : null;
-    const resolvedSender = senderFromPayload ?? legacy.sender ?? verification.sender;
+    if (
+      wireSignatureVerification &&
+      !wireSignatureVerification.signers.includes(verification.sender)
+    ) {
+      return null;
+    }
+
+    const senderFromTransaction = wireSignatureVerification?.signers[0] ?? null;
+    const resolvedSender =
+      senderFromPayload ?? legacy.sender ?? senderFromTransaction ?? verification.sender;
 
     return {
       amount: verification.amount,

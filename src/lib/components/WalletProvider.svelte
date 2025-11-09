@@ -3,7 +3,7 @@
   import { setContext } from 'svelte';
   import { wallet } from '$lib/wallet/wallet.svelte';
 
-  export let rpcEndpoint: string = 'https://api.mainnet-beta.solana.com';
+  export let rpcEndpoint: string = '/api/solana/rpc';
 
   onMount(() => {
     wallet.initialize(rpcEndpoint);

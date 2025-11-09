@@ -53,6 +53,11 @@ interface SendTransactionOptions {
   };
 }
 
+interface SendTransactionResult {
+  signature: string;
+  wireTransaction?: string | null;
+}
+
 function resolveChainFromEndpoint(endpoint: string): IdentifierString {
   const normalized = endpoint.toLowerCase();
   if (normalized.includes('devnet')) {
@@ -68,7 +73,7 @@ function resolveChainFromEndpoint(endpoint: string): IdentifierString {
 }
 
 const defaultState: WalletState = {
-  rpcEndpoint: 'https://api.mainnet-beta.solana.com',
+  rpcEndpoint: '/api/solana/rpc',
   availableWallets: [],
   standardWallet: null,
   standardAccount: null,
@@ -320,8 +325,23 @@ function createWalletStore() {
   async function sendTransaction(
     transaction: Transaction,
     options: SendTransactionOptions = {}
-  ): Promise<string> {
+  ): Promise<SendTransactionResult> {
     const state = get(store);
+
+    const resolveWireTransaction = (
+      signature: string,
+      payer: Address
+    ): ReturnType<typeof getBase64EncodedWireTransaction> => {
+      const signatureBytes = bs58.decode(signature);
+      const signedTransaction: Transaction = {
+        ...transaction,
+        signatures: {
+          ...transaction.signatures,
+          [payer]: signatureBytes
+        }
+      };
+      return getBase64EncodedWireTransaction(signedTransaction);
+    };
 
     if (state.standardWallet && state.standardAccount) {
       const { wallet } = state.standardWallet;
@@ -330,6 +350,82 @@ function createWalletStore() {
       const serializedBytes =
         serialized instanceof Uint8Array ? serialized : new Uint8Array(serialized);
       const chain = resolveChainFromEndpoint(state.rpcEndpoint);
+      const payerAddress = state.publicKey ?? toAddress(account.address);
+
+      if (!payerAddress) {
+        throw new Error('Unable to resolve wallet public key.');
+      }
+
+      if (
+        SolanaSignTransaction in wallet.features &&
+        account.features.includes(SolanaSignTransaction)
+      ) {
+        const feature = wallet.features[SolanaSignTransaction] as
+          | SolanaSignTransactionFeature[typeof SolanaSignTransaction]
+          | undefined;
+        if (!feature) {
+          throw new Error('Connected wallet does not expose solana:signTransaction.');
+        }
+        const featureMaxRetries = options.maxRetries;
+        const featureMinContextSlot = options.minContextSlot;
+        const [result] = await feature.signTransaction({
+          account,
+          chain,
+          transaction: serializedBytes,
+          options: {
+            preflightCommitment: options.commitment,
+            minContextSlot: featureMinContextSlot
+          }
+        });
+
+        const signedBytes = result?.signedTransaction;
+        if (!signedBytes) {
+          throw new Error('Wallet did not return a signed transaction');
+        }
+
+        if (!options.rpc) {
+          throw new Error('An RPC client is required to send signed transactions');
+        }
+
+        const wireBytes =
+          signedBytes instanceof Uint8Array ? signedBytes : new Uint8Array(signedBytes);
+        const decodedTransaction = getTransactionDecoder().decode(wireBytes);
+        const signatureBytes = decodedTransaction.signatures[payerAddress];
+        if (!signatureBytes) {
+          throw new Error('Wallet did not provide a signature for the fee payer');
+        }
+
+        const signature = bs58.encode(signatureBytes);
+        const wireTransaction = getBase64EncodedWireTransaction(decodedTransaction);
+        const rpcMaxRetries =
+          options.maxRetries === undefined ? undefined : BigInt(options.maxRetries);
+        const rpcMinContextSlot =
+          options.minContextSlot === undefined ? undefined : BigInt(options.minContextSlot);
+
+        await options.rpc
+          .sendTransaction(wireTransaction, {
+            encoding: 'base64',
+            skipPreflight: options.skipPreflight,
+            maxRetries: rpcMaxRetries,
+            minContextSlot: rpcMinContextSlot,
+            preflightCommitment: options.commitment
+          })
+          .send();
+
+        if (options.latestBlockhash) {
+          await waitForTransactionConfirmation({
+            rpc: options.rpc,
+            signature,
+            latestBlockhash: {
+              blockhash: options.latestBlockhash.blockhash,
+              lastValidBlockHeight: BigInt(options.latestBlockhash.lastValidBlockHeight)
+            },
+            commitment: options.commitment ?? 'confirmed'
+          });
+        }
+
+        return { signature, wireTransaction: String(wireTransaction) };
+      }
 
       if (
         SolanaSignAndSendTransaction in wallet.features &&
@@ -364,6 +460,7 @@ function createWalletStore() {
         }
 
         const signature = bs58.encode(signatureBytes);
+        const wireTransaction = resolveWireTransaction(signature, payerAddress);
 
         if (options.rpc && options.latestBlockhash) {
           await waitForTransactionConfirmation({
@@ -377,67 +474,7 @@ function createWalletStore() {
           });
         }
 
-        return signature;
-      }
-
-      if (SolanaSignTransaction in wallet.features && account.features.includes(SolanaSignTransaction)) {
-        const feature = wallet.features[SolanaSignTransaction] as
-          | SolanaSignTransactionFeature[typeof SolanaSignTransaction]
-          | undefined;
-        if (!feature) {
-          throw new Error('Connected wallet does not expose solana:signTransaction.');
-        }
-        const featureMaxRetries = options.maxRetries;
-        const featureMinContextSlot = options.minContextSlot;
-        const [result] = await feature.signTransaction({
-          account,
-          chain,
-          transaction: serializedBytes,
-          options: {
-            preflightCommitment: options.commitment,
-            minContextSlot: featureMinContextSlot
-          }
-        });
-
-        const signedBytes = result?.signedTransaction;
-        if (!signedBytes) {
-          throw new Error('Wallet did not return a signed transaction');
-        }
-
-        if (!options.rpc) {
-          throw new Error('An RPC client is required to send signed transactions');
-        }
-
-        const signedTransaction = getTransactionDecoder().decode(signedBytes);
-        const wireTransaction = getBase64EncodedWireTransaction(signedTransaction);
-        const rpcMaxRetries =
-          options.maxRetries === undefined ? undefined : BigInt(options.maxRetries);
-        const rpcMinContextSlot =
-          options.minContextSlot === undefined ? undefined : BigInt(options.minContextSlot);
-        const signature = await options.rpc
-          .sendTransaction(wireTransaction, {
-            encoding: 'base64',
-            skipPreflight: options.skipPreflight,
-            maxRetries: rpcMaxRetries,
-            minContextSlot: rpcMinContextSlot,
-            preflightCommitment: options.commitment
-          })
-          .send();
-        const signatureString = signature as string;
-
-        if (options.latestBlockhash) {
-          await waitForTransactionConfirmation({
-            rpc: options.rpc,
-            signature: signatureString,
-            latestBlockhash: {
-              blockhash: options.latestBlockhash.blockhash,
-              lastValidBlockHeight: BigInt(options.latestBlockhash.lastValidBlockHeight)
-            },
-            commitment: options.commitment ?? 'confirmed'
-          });
-        }
-
-        return signatureString;
+        return { signature, wireTransaction: String(wireTransaction) };
       }
 
       throw new Error('Connected wallet does not support sending transactions');
@@ -448,7 +485,26 @@ function createWalletStore() {
       if (!signatures[0]) {
         throw new Error('Mobile wallet did not return a signature');
       }
-      return signatures[0];
+      const payerAddress = state.publicKey;
+      if (!payerAddress) {
+        throw new Error('Unable to resolve wallet public key.');
+      }
+      const signature = signatures[0];
+      const wireTransaction = resolveWireTransaction(signature, payerAddress);
+
+      if (options.rpc && options.latestBlockhash) {
+        await waitForTransactionConfirmation({
+          rpc: options.rpc,
+          signature,
+          latestBlockhash: {
+            blockhash: options.latestBlockhash.blockhash,
+            lastValidBlockHeight: BigInt(options.latestBlockhash.lastValidBlockHeight)
+          },
+          commitment: options.commitment ?? 'confirmed'
+        });
+      }
+
+      return { signature, wireTransaction: String(wireTransaction) };
     }
 
     throw new Error('No wallet connected');
