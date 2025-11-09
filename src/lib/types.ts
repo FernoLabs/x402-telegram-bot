@@ -112,6 +112,34 @@ export interface PaymentHistoryEntry {
   verification?: (PaymentDetails & { slot: number; blockTime: number | null }) | null;
 }
 
+export type MessageRequestStatus =
+  | 'awaiting_payment'
+  | 'signature_saved'
+  | 'paid'
+  | 'sent'
+  | 'failed';
+
+export interface MessageRequest {
+  id: number;
+  paymentRequestId: number;
+  groupId: number;
+  walletAddress: string;
+  senderName: string | null;
+  message: string;
+  status: MessageRequestStatus;
+  lastError: string | null;
+  telegramMessageId: number | null;
+  telegramChatId: string | null;
+  sentAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MessagePaymentHistoryEntry extends PaymentHistoryEntry {
+  message: MessageRequest | null;
+  group: Group | null;
+}
+
 export interface TelegramChat {
   id: number | string;
   type?: 'private' | 'group' | 'supergroup' | 'channel';
