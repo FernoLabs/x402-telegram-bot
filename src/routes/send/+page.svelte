@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { browser } from '$app/environment';
+        import { browser } from '$app/environment';
+        import { onDestroy } from 'svelte';
 	import {
 		address,
 		appendTransactionMessageInstructions,
@@ -100,11 +101,12 @@
 	let error: string | null = null;
 	let successAuction: Auction | null = null;
 
-	let pendingPayments: PendingPaymentRequest[] = [];
-	let activePaymentId: string | null = null;
-	let signatureInputs: Record<string, string> = {};
-	let signatureErrors: Record<string, string | undefined> = {};
-	let walletProcessing = false;
+        let pendingPayments: PendingPaymentRequest[] = [];
+        let activePaymentId: string | null = null;
+        let signatureInputs: Record<string, string> = {};
+        let signatureErrors: Record<string, string | undefined> = {};
+        let signatureSubmitted: Record<string, boolean> = {};
+        let walletProcessing = false;
 	let walletStatus: string | null = null;
 	let walletError: string | null = null;
 	let lastActivePaymentId: string | null = null;
@@ -114,7 +116,11 @@
 	let currentRpcEndpoint: string | null = null;
 	let walletPaymentSupported = false;
 	let canUseWallet = false;
-	const formatUsd = (value: number) => currencyFormatter.format(value);
+        const formatUsd = (value: number) => currencyFormatter.format(value);
+        const AUTO_REFRESH_INTERVAL_MS = 1000;
+
+        let autoRefreshTimer: ReturnType<typeof setInterval> | null = null;
+        let autoRefreshActive = false;
 
 	const formatAmountForCurrency = (value: number, currency: string): string => {
 		const normalized = currency ? currency.toUpperCase() : '';
@@ -128,20 +134,28 @@
 		});
 	};
 
-	const formatExpiration = (expiresAt: string): string | null => {
-		const timestamp = Date.parse(expiresAt);
-		if (Number.isNaN(timestamp)) {
-			return null;
-		}
+        const formatExpiration = (expiresAt: string): string | null => {
+                const timestamp = Date.parse(expiresAt);
+                if (Number.isNaN(timestamp)) {
+                        return null;
+                }
 
-		return new Date(timestamp).toLocaleString(undefined, {
-			year: 'numeric',
-			month: 'short',
-			day: 'numeric',
-			hour: '2-digit',
-			minute: '2-digit'
-		});
-	};
+                return new Date(timestamp).toLocaleString(undefined, {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                });
+        };
+
+        const stopAutoRefresh = (): void => {
+                if (autoRefreshTimer) {
+                        clearInterval(autoRefreshTimer);
+                        autoRefreshTimer = null;
+                }
+                autoRefreshActive = false;
+        };
 
 	function resetStatus(): void {
 		error = null;
@@ -489,42 +503,51 @@
 		return normalized;
 	}
 
-	function removePendingPayment(id: string): void {
-		pendingPayments = pendingPayments.filter((item) => item.internalId !== id);
-		const { [id]: _removedSignature, ...restSignatures } = signatureInputs;
-		signatureInputs = restSignatures;
-		const { [id]: _removedError, ...restErrors } = signatureErrors;
-		signatureErrors = restErrors;
-		if (pendingPayments.length === 0) {
-			activePaymentId = null;
-		} else if (
-			!activePaymentId ||
-			!pendingPayments.some((item) => item.internalId === activePaymentId)
+        function removePendingPayment(id: string): void {
+                pendingPayments = pendingPayments.filter((item) => item.internalId !== id);
+                const { [id]: _removedSignature, ...restSignatures } = signatureInputs;
+                signatureInputs = restSignatures;
+                const { [id]: _removedError, ...restErrors } = signatureErrors;
+                signatureErrors = restErrors;
+                const { [id]: _removedSubmitted, ...restSubmitted } = signatureSubmitted;
+                signatureSubmitted = restSubmitted;
+                if (pendingPayments.length === 0) {
+                        activePaymentId = null;
+                } else if (
+                        !activePaymentId ||
+                        !pendingPayments.some((item) => item.internalId === activePaymentId)
 		) {
 			activePaymentId = pendingPayments[0].internalId;
 		}
 	}
 
-	function clearPendingPayments(): void {
-		pendingPayments = [];
-		activePaymentId = null;
-		signatureInputs = {};
-		signatureErrors = {};
-	}
+        function clearPendingPayments(): void {
+                pendingPayments = [];
+                activePaymentId = null;
+                signatureInputs = {};
+                signatureErrors = {};
+                signatureSubmitted = {};
+                stopAutoRefresh();
+        }
 
-	function updateSignatureForActive(value: string): void {
-		if (!activePaymentId) {
-			return;
-		}
-		signatureInputs = { ...signatureInputs, [activePaymentId]: value };
-		const { [activePaymentId]: _removed, ...rest } = signatureErrors;
-		signatureErrors = rest;
-	}
+        function updateSignatureForActive(value: string): void {
+                if (!activePaymentId) {
+                        return;
+                }
+                signatureInputs = { ...signatureInputs, [activePaymentId]: value };
+                const { [activePaymentId]: _removed, ...rest } = signatureErrors;
+                signatureErrors = rest;
+                signatureSubmitted = { ...signatureSubmitted, [activePaymentId]: false };
+        }
 
-	async function requestPayment(): Promise<void> {
-		const selectedGroup = findSelectedGroup(selectedGroupId);
+        async function requestPayment(): Promise<void> {
+                if (loading) {
+                        return;
+                }
 
-		if (!selectedGroup) {
+                const selectedGroup = findSelectedGroup(selectedGroupId);
+
+                if (!selectedGroup) {
 			error = 'Select a group before sending a message.';
 			return;
 		}
@@ -579,15 +602,20 @@
 				if (hasPaymentDetails) {
 					const pending = addOrUpdatePendingPayment(payload as PaymentRequestData);
 
-					if (trimmedSignature && signatureTargetId) {
-						signatureErrors = {
-							...signatureErrors,
-							[signatureTargetId]:
-								'We could not confirm that signature yet. Wait for the transaction to finalize on Solana, then try again.'
-						};
-					}
+                                                if (trimmedSignature && signatureTargetId) {
+                                                        signatureErrors = {
+                                                                ...signatureErrors,
+                                                                [signatureTargetId]:
+                                                                        'We could not confirm that signature yet. Wait for the transaction to finalize on Solana, then try again.'
+                                                        };
+                                                        signatureSubmitted = {
+                                                        ...signatureSubmitted,
+                                                        [signatureTargetId]: true,
+                                                        [pending.internalId]: true
+                                                        };
+                                                }
 
-					if (!(pending.internalId in signatureInputs)) {
+                                        if (!(pending.internalId in signatureInputs)) {
 						signatureInputs = { ...signatureInputs, [pending.internalId]: '' };
 					}
 				} else {
@@ -821,29 +849,53 @@
 	$: paymentMemo = activePayment ? resolveMemo(activePayment) : null;
 	$: paymentInstructions = activePayment?.instructions ?? null;
 	$: hostedCheckoutLink = activePayment ? buildHostedCheckoutUrl(activePayment) : null;
-	$: paymentExpirationDisplay =
-		activePayment && activePayment.expiresAt ? formatExpiration(activePayment.expiresAt) : null;
-	$: submitButtonLabel =
-		pendingPayments.length > 0 ? 'Submit payment confirmation' : 'Generate payment instructions';
-	$: currentSignatureValue = activePaymentId ? (signatureInputs[activePaymentId] ?? '') : '';
-	$: currentSignatureError = activePaymentId ? (signatureErrors[activePaymentId] ?? null) : null;
-	$: walletConnected = $wallet.connected;
-	$: walletPublicKey = $wallet.publicKey ?? null;
-	$: if (browser && $wallet.rpcEndpoint && $wallet.rpcEndpoint !== currentRpcEndpoint) {
-		currentRpcEndpoint = $wallet.rpcEndpoint;
-		console.log('Initializing Solana RPC connection to', currentRpcEndpoint);
+        $: paymentExpirationDisplay =
+                activePayment && activePayment.expiresAt ? formatExpiration(activePayment.expiresAt) : null;
+        $: submitButtonLabel =
+                pendingPayments.length > 0 ? 'Submit payment confirmation' : 'Generate payment instructions';
+        $: currentSignatureValue = activePaymentId ? (signatureInputs[activePaymentId] ?? '') : '';
+        $: currentSignatureError = activePaymentId ? (signatureErrors[activePaymentId] ?? null) : null;
+        $: activeSignatureSubmitted = activePaymentId ? Boolean(signatureSubmitted[activePaymentId]) : false;
+        $: activeSignatureValue = currentSignatureValue.trim();
+        $: autoRefreshEligible = Boolean(
+                browser &&
+                activeSignatureSubmitted &&
+                activeSignatureValue &&
+                pendingPayments.length > 0
+        );
+        $: {
+                if (autoRefreshEligible) {
+                        if (!autoRefreshTimer) {
+                                autoRefreshTimer = setInterval(() => {
+                                        if (!loading) {
+                                                void requestPayment();
+                                        }
+                                }, AUTO_REFRESH_INTERVAL_MS);
+                        }
+                        autoRefreshActive = true;
+                } else {
+                        stopAutoRefresh();
+                }
+        }
+        $: walletConnected = $wallet.connected;
+        $: walletPublicKey = $wallet.publicKey ?? null;
+        $: if (browser && $wallet.rpcEndpoint && $wallet.rpcEndpoint !== currentRpcEndpoint) {
+                currentRpcEndpoint = $wallet.rpcEndpoint;
+                console.log('Initializing Solana RPC connection to', currentRpcEndpoint);
 		console.log('Wallet rpc', $wallet.rpcEndpoint);
 		// FIXME: Remove and use backend with strong cache
 		rpc = createSolanaRpc('https://jenifer-6iwpyb-fast-mainnet.helius-rpc.com');
 	}
 	$: walletPaymentSupported = isSupportedWalletPayment(activePayment);
 	$: canUseWallet = Boolean(walletPaymentSupported && walletConnected && walletPublicKey && rpc);
-	$: if (activePaymentId !== lastActivePaymentId) {
-		walletError = null;
-		walletStatus = null;
-		walletProcessing = false;
-		lastActivePaymentId = activePaymentId;
-	}
+        $: if (activePaymentId !== lastActivePaymentId) {
+                walletError = null;
+                walletStatus = null;
+                walletProcessing = false;
+                lastActivePaymentId = activePaymentId;
+        }
+
+        onDestroy(stopAutoRefresh);
 </script>
 
 <section class="page" aria-labelledby="send-title">
@@ -942,9 +994,9 @@
 										Expires {formatExpiration(request.expiresAt) ?? request.expiresAt}
 									</span>
 								{/if}
-								{#if signatureInputs[request.internalId]}
-									<span class="signature-flag">Signature saved</span>
-								{/if}
+                                                                {#if signatureSubmitted[request.internalId]}
+                                                                        <span class="signature-flag">Signature saved</span>
+                                                                {/if}
 							</button>
 						</li>
 					{/each}
@@ -1028,26 +1080,49 @@
 							</div>
 						{/if}
 
-						<label class="signature-field">
-							<span>Transaction signature</span>
-							<input
-								type="text"
-								value={currentSignatureValue}
+                                                <label class="signature-field">
+                                                        <span>Transaction signature</span>
+                                                        <input
+                                                                type="text"
+                                                                value={currentSignatureValue}
 								placeholder="Paste or generate the Solana transaction signature"
 								on:input={(event) =>
 									updateSignatureForActive((event.target as HTMLInputElement).value)}
 								disabled={loading}
-							/>
-							<small>Resubmit this form after the transaction is confirmed on Solana.</small>
-							{#if currentSignatureError}
-								<span class="payload-error">{currentSignatureError}</span>
-							{/if}
-						</label>
-						{#if paymentExpirationDisplay}
-							<p class="footnote">Payment request expires {paymentExpirationDisplay}.</p>
-						{/if}
-					</div>
-				{:else}
+                                                        />
+                                                        <small>Resubmit this form after the transaction is confirmed on Solana.</small>
+                                                        {#if currentSignatureError}
+                                                                <span class="payload-error">{currentSignatureError}</span>
+                                                        {/if}
+                                                </label>
+                                                {#if activeSignatureSubmitted}
+                                                        <div class="signature-actions" aria-live="polite">
+                                                                <button
+                                                                        type="button"
+                                                                        class="refresh-button"
+                                                                        on:click={requestPayment}
+                                                                        disabled={loading}
+                                                                >
+                                                                        {#if loading}
+                                                                                Checking payment status…
+                                                                        {:else}
+                                                                                Refresh payment status
+                                                                        {/if}
+                                                                </button>
+                                                                <p class="refresh-hint">
+                                                                        {#if autoRefreshActive}
+                                                                                We'll keep retrying automatically every second.
+                                                                        {:else}
+                                                                                Click refresh to check for confirmation again.
+                                                                        {/if}
+                                                                </p>
+                                                        </div>
+                                                {/if}
+                                                {#if paymentExpirationDisplay}
+                                                        <p class="footnote">Payment request expires {paymentExpirationDisplay}.</p>
+                                                {/if}
+                                        </div>
+                                {:else}
 					<p class="payment-placeholder">
 						Select a payment request to view the settlement instructions.
 					</p>
@@ -1293,11 +1368,37 @@
 		margin-top: 0.5rem;
 	}
 
-	.signature-field small {
-		color: #0f172a;
-		opacity: 0.8;
-		font-size: 0.85rem;
-	}
+        .signature-field small {
+                color: #0f172a;
+                opacity: 0.8;
+                font-size: 0.85rem;
+        }
+
+        .signature-actions {
+                display: grid;
+                gap: 0.35rem;
+                margin-top: 0.75rem;
+        }
+
+        .refresh-button {
+                background: #2563eb;
+                color: #fff;
+        }
+
+        .refresh-button:hover,
+        .refresh-button:focus-visible {
+                background: #1d4ed8;
+        }
+
+        .refresh-button[disabled] {
+                opacity: 0.75;
+        }
+
+        .refresh-hint {
+                margin: 0;
+                font-size: 0.9rem;
+                color: #475569;
+        }
 
 	.wallet-settlement {
 		display: grid;
