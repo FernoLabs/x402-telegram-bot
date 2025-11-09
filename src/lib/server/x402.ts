@@ -8,365 +8,367 @@ const NETWORK_HEADERS = ['x-402-network', 'x-payment-network'];
 const PAYMENT_PAYLOAD_HEADER = 'x-payment';
 
 interface PaymentValidationOptions {
-  paymentDetails?: {
-    amount: number;
-    currency: string;
-    recipient: string;
-    network: string;
-  };
-  solana?: {
-    rpcUrl: string;
-    tokenMintAddress?: string | null;
-    commitment?: 'processed' | 'confirmed' | 'finalized';
-  };
+	paymentDetails?: {
+		amount: number;
+		currency: string;
+		recipient: string;
+		network: string;
+	};
+	solana?: {
+		rpcUrl: string;
+		tokenMintAddress?: string | null;
+		commitment?: 'processed' | 'confirmed' | 'finalized';
+	};
 }
 
 function readHeader(request: Request, keys: string[]): string | null {
-  for (const key of keys) {
-    const value = request.headers.get(key);
-    if (value) {
-      return value;
-    }
-  }
-  return null;
+	for (const key of keys) {
+		const value = request.headers.get(key);
+		if (value) {
+			return value;
+		}
+	}
+	return null;
 }
 
 interface LegacyHeaderValues {
-  amount: number | null;
-  sender: string | null;
-  txHash: string | null;
-  network: string | null;
+	amount: number | null;
+	sender: string | null;
+	txHash: string | null;
+	network: string | null;
 }
 
 function parseLegacyHeaders(request: Request): LegacyHeaderValues {
-  const amountHeader = readHeader(request, AMOUNT_HEADERS);
-  const senderHeader = readHeader(request, SENDER_HEADERS);
-  const txHashHeader = readHeader(request, TX_HASH_HEADERS);
-  const networkHeader = readHeader(request, NETWORK_HEADERS);
+	const amountHeader = readHeader(request, AMOUNT_HEADERS);
+	const senderHeader = readHeader(request, SENDER_HEADERS);
+	const txHashHeader = readHeader(request, TX_HASH_HEADERS);
+	const networkHeader = readHeader(request, NETWORK_HEADERS);
 
-  const amount = amountHeader ? Number.parseFloat(amountHeader) : Number.NaN;
+	const amount = amountHeader ? Number.parseFloat(amountHeader) : Number.NaN;
 
-  return {
-    amount: Number.isNaN(amount) ? null : amount,
-    sender: senderHeader,
-    txHash: txHashHeader,
-    network: networkHeader
-  };
+	return {
+		amount: Number.isNaN(amount) ? null : amount,
+		sender: senderHeader,
+		txHash: txHashHeader,
+		network: networkHeader
+	};
 }
 
 function extractSender(payload: Record<string, unknown>): string | null {
-  const candidateKeys = ['payer', 'sender', 'payerAddress', 'owner', 'from'];
-  for (const key of candidateKeys) {
-    const value = payload[key];
-    if (typeof value === 'string' && value.trim()) {
-      return value;
-    }
-  }
+	const candidateKeys = ['payer', 'sender', 'payerAddress', 'owner', 'from'];
+	for (const key of candidateKeys) {
+		const value = payload[key];
+		if (typeof value === 'string' && value.trim()) {
+			return value;
+		}
+	}
 
-  const nested = payload.payment;
-  if (nested && typeof nested === 'object') {
-    for (const key of candidateKeys) {
-      const value = (nested as Record<string, unknown>)[key];
-      if (typeof value === 'string' && value.trim()) {
-        return value;
-      }
-    }
-  }
-  return null;
+	const nested = payload.payment;
+	if (nested && typeof nested === 'object') {
+		for (const key of candidateKeys) {
+			const value = (nested as Record<string, unknown>)[key];
+			if (typeof value === 'string' && value.trim()) {
+				return value;
+			}
+		}
+	}
+	return null;
 }
 
 function extractTxHash(payload: Record<string, unknown>): string | null {
-  const candidateKeys = ['txHash', 'transactionSignature', 'signature', 'hash'];
-  for (const key of candidateKeys) {
-    const value = payload[key];
-    if (typeof value === 'string' && value.trim()) {
-      return value;
-    }
-  }
+	const candidateKeys = ['txHash', 'transactionSignature', 'signature', 'hash'];
+	for (const key of candidateKeys) {
+		const value = payload[key];
+		if (typeof value === 'string' && value.trim()) {
+			return value;
+		}
+	}
 
-  const nested = payload.payment;
-  if (nested && typeof nested === 'object') {
-    for (const key of candidateKeys) {
-      const value = (nested as Record<string, unknown>)[key];
-      if (typeof value === 'string' && value.trim()) {
-        return value;
-      }
-    }
-  }
-  return null;
+	const nested = payload.payment;
+	if (nested && typeof nested === 'object') {
+		for (const key of candidateKeys) {
+			const value = (nested as Record<string, unknown>)[key];
+			if (typeof value === 'string' && value.trim()) {
+				return value;
+			}
+		}
+	}
+	return null;
 }
 
 function extractWireTransaction(payload: Record<string, unknown>): string | null {
-  const candidateKeys = ['transaction', 'wireTransaction', 'serializedTransaction'];
-  for (const key of candidateKeys) {
-    const value = payload[key];
-    if (typeof value === 'string' && value.trim()) {
-      return value;
-    }
-  }
+	const candidateKeys = ['transaction', 'wireTransaction', 'serializedTransaction'];
+	for (const key of candidateKeys) {
+		const value = payload[key];
+		if (typeof value === 'string' && value.trim()) {
+			return value;
+		}
+	}
 
-  const nested = payload.payment;
-  if (nested && typeof nested === 'object') {
-    for (const key of candidateKeys) {
-      const value = (nested as Record<string, unknown>)[key];
-      if (typeof value === 'string' && value.trim()) {
-        return value;
-      }
-    }
-  }
+	const nested = payload.payment;
+	if (nested && typeof nested === 'object') {
+		for (const key of candidateKeys) {
+			const value = (nested as Record<string, unknown>)[key];
+			if (typeof value === 'string' && value.trim()) {
+				return value;
+			}
+		}
+	}
 
-  return null;
+	return null;
 }
 
 export async function parsePayment(
-  request: Request,
-  options?: PaymentValidationOptions
+	request: Request,
+	options?: PaymentValidationOptions
 ): Promise<PaymentDetails | null> {
-  const legacy = parseLegacyHeaders(request);
+	const legacy = parseLegacyHeaders(request);
 
-  if (!options?.paymentDetails) {
-    if (legacy.amount !== null && legacy.sender) {
-      return {
-        amount: legacy.amount,
-        sender: legacy.sender,
-        txHash: legacy.txHash,
-        currency: 'USDC',
-        network: legacy.network ?? 'solana'
-      };
-    }
+	if (!options?.paymentDetails) {
+		if (legacy.amount !== null && legacy.sender) {
+			return {
+				amount: legacy.amount,
+				sender: legacy.sender,
+				txHash: legacy.txHash,
+				currency: 'USDC',
+				network: legacy.network ?? 'solana'
+			};
+		}
 
-    return null;
-  }
+		return null;
+	}
 
-  const encodedPayload = request.headers.get(PAYMENT_PAYLOAD_HEADER);
-  let payload: Record<string, unknown> | null = null;
+	const encodedPayload = request.headers.get(PAYMENT_PAYLOAD_HEADER);
+	let payload: Record<string, unknown> | null = null;
 
-  if (encodedPayload) {
-    try {
-      const normalized = encodedPayload.replace(/\s+/g, '');
-      const restored = normalized.replace(/-/g, '+').replace(/_/g, '/');
-      const padding = restored.length % 4 === 0 ? 0 : 4 - (restored.length % 4);
-      const padded = restored + '='.repeat(padding);
-      const decoded = atob(padded);
-      payload = JSON.parse(decoded) as Record<string, unknown>;
-    } catch (error) {
-      console.warn('Failed to decode x-payment payload', error);
-      payload = null;
-    }
-  }
+	if (encodedPayload) {
+		try {
+			const normalized = encodedPayload.replace(/\s+/g, '');
+			const restored = normalized.replace(/-/g, '+').replace(/_/g, '/');
+			const padding = restored.length % 4 === 0 ? 0 : 4 - (restored.length % 4);
+			const padded = restored + '='.repeat(padding);
+			const decoded = atob(padded);
+			payload = JSON.parse(decoded) as Record<string, unknown>;
+		} catch (error) {
+			console.warn('Failed to decode x-payment payload', error);
+			payload = null;
+		}
+	}
 
-  const txHashFromPayload = payload ? extractTxHash(payload) : null;
-  const wireTransaction = payload ? extractWireTransaction(payload) : null;
-  const txHash = txHashFromPayload ?? legacy.txHash;
+	const txHashFromPayload = payload ? extractTxHash(payload) : null;
+	const wireTransaction = payload ? extractWireTransaction(payload) : null;
+	const txHash = txHashFromPayload ?? legacy.txHash;
 
-  const expectedNetwork = options.paymentDetails.network?.toLowerCase();
-  const expectedCurrency = options.paymentDetails.currency?.toUpperCase();
+	const expectedNetwork = options.paymentDetails.network?.toLowerCase();
+	const expectedCurrency = options.paymentDetails.currency?.toUpperCase();
 
-  if (expectedNetwork === 'solana' && txHash) {
-    const senderFromPayload = payload ? extractSender(payload) : null;
-    let wireSignatureVerification: Awaited<ReturnType<typeof verifyWireTransactionSignature>> | null = null;
+	if (expectedNetwork === 'solana' && txHash) {
+		const senderFromPayload = payload ? extractSender(payload) : null;
+		let wireSignatureVerification: Awaited<
+			ReturnType<typeof verifyWireTransactionSignature>
+		> | null = null;
 
-    if (wireTransaction) {
-      wireSignatureVerification = await verifyWireTransactionSignature({
-        wireTransaction,
-        expectedSignature: txHash,
-        expectedSigner: senderFromPayload ?? legacy.sender
-      });
+		if (wireTransaction) {
+			wireSignatureVerification = await verifyWireTransactionSignature({
+				wireTransaction,
+				expectedSignature: txHash,
+				expectedSigner: senderFromPayload ?? legacy.sender
+			});
 
-      if (!wireSignatureVerification) {
-        return null;
-      }
-    }
+			if (!wireSignatureVerification) {
+				return null;
+			}
+		}
 
-    const verification = await verifySolanaPayment({
-      signature: txHash,
-      rpcUrl: options.solana?.rpcUrl,
-      recipient: options.paymentDetails.recipient,
-      minAmount: options.paymentDetails.amount,
-      expectedCurrency,
-      tokenMintAddress: options.solana?.tokenMintAddress ?? null,
-      commitment: options.solana?.commitment ?? 'confirmed'
-    });
+		const verification = await verifySolanaPayment({
+			signature: txHash,
+			rpcUrl: options.solana?.rpcUrl,
+			recipient: options.paymentDetails.recipient,
+			minAmount: options.paymentDetails.amount,
+			expectedCurrency,
+			tokenMintAddress: options.solana?.tokenMintAddress ?? null,
+			commitment: options.solana?.commitment ?? 'confirmed'
+		});
 
-    if (!verification) {
-      return null;
-    }
+		if (!verification) {
+			return null;
+		}
 
-    if (
-      wireSignatureVerification &&
-      !wireSignatureVerification.signers.includes(verification.sender)
-    ) {
-      return null;
-    }
+		if (
+			wireSignatureVerification &&
+			!wireSignatureVerification.signers.includes(verification.sender)
+		) {
+			return null;
+		}
 
-    const senderFromTransaction = wireSignatureVerification?.signers[0] ?? null;
-    const resolvedSender =
-      senderFromPayload ?? legacy.sender ?? senderFromTransaction ?? verification.sender;
+		const senderFromTransaction = wireSignatureVerification?.signers[0] ?? null;
+		const resolvedSender =
+			senderFromPayload ?? legacy.sender ?? senderFromTransaction ?? verification.sender;
 
-    return {
-      amount: verification.amount,
-      sender: resolvedSender ?? verification.sender,
-      txHash,
-      currency: expectedCurrency ?? verification.currency,
-      network: 'solana'
-    };
-  }
+		return {
+			amount: verification.amount,
+			sender: resolvedSender ?? verification.sender,
+			txHash,
+			currency: expectedCurrency ?? verification.currency,
+			network: 'solana'
+		};
+	}
 
-  if (legacy.amount !== null && legacy.sender && legacy.amount >= options.paymentDetails.amount) {
-    return {
-      amount: legacy.amount,
-      sender: legacy.sender,
-      txHash: legacy.txHash,
-      currency: expectedCurrency ?? options.paymentDetails.currency,
-      network: legacy.network ?? options.paymentDetails.network
-    };
-  }
+	if (legacy.amount !== null && legacy.sender && legacy.amount >= options.paymentDetails.amount) {
+		return {
+			amount: legacy.amount,
+			sender: legacy.sender,
+			txHash: legacy.txHash,
+			currency: expectedCurrency ?? options.paymentDetails.currency,
+			network: legacy.network ?? options.paymentDetails.network
+		};
+	}
 
-  return null;
+	return null;
 }
 
 const DEFAULT_FACILITATOR_URL = 'https://facilitator.payai.network/pay';
 
 interface PaymentResponseExtras {
-  currencyCode?: string;
-  network?: string;
-  groupName?: string;
-  memo?: string | null;
-  assetAddress?: string | null;
-  assetType?: string | null;
-  resource?: string | null;
-  description?: string | null;
-  expiresInSeconds?: number;
-  checkoutUrl?: string | null;
-  facilitatorUrl?: string | null;
+	currencyCode?: string;
+	network?: string;
+	groupName?: string;
+	memo?: string | null;
+	assetAddress?: string | null;
+	assetType?: string | null;
+	resource?: string | null;
+	description?: string | null;
+	expiresInSeconds?: number;
+	checkoutUrl?: string | null;
+	facilitatorUrl?: string | null;
 }
 
 function sanitizeMemo(value: string | null | undefined): string | null {
-  if (!value) {
-    return null;
-  }
+	if (!value) {
+		return null;
+	}
 
-  const compact = value.replace(/\s+/g, ' ').trim();
-  if (!compact) {
-    return null;
-  }
+	const compact = value.replace(/\s+/g, ' ').trim();
+	if (!compact) {
+		return null;
+	}
 
-  return compact.slice(0, 120);
+	return compact.slice(0, 120);
 }
 
 export function buildPaymentRequiredResponse(
-  request: PaymentRequestRecord,
-  extras?: PaymentResponseExtras
+	request: PaymentRequestRecord,
+	extras?: PaymentResponseExtras
 ): Response {
-  const requiredAmount = request.amount;
-  const network = request.network || extras?.network || 'solana';
-  const currencyCode = request.currency || extras?.currencyCode || 'USDC';
-  const assetAddress = request.assetAddress ?? extras?.assetAddress ?? null;
-  const assetType = request.assetType ?? extras?.assetType ?? null;
-  const memo = sanitizeMemo(request.memo ?? extras?.memo ?? null);
-  const resource = request.resource ?? extras?.resource ?? '/api/auctions';
-  const description =
-    request.description ??
-    extras?.description ??
-    `Payment required to post a message to ${extras?.groupName ?? 'the selected group'}.`;
-  const instructions =
-    request.instructions ??
-    (memo
-      ? `Send ${requiredAmount} ${currencyCode} on ${network} to ${request.recipient} with memo "${memo}". Include the transaction signature in the X-PAYMENT-TXHASH header when resubmitting.`
-      : `Send ${requiredAmount} ${currencyCode} on ${network} to ${request.recipient}. Include the transaction signature in the X-PAYMENT-TXHASH header when resubmitting.`);
-  const checkoutUrl = request.checkoutUrl ?? extras?.checkoutUrl ?? null;
-  const facilitatorUrl =
-    extras?.facilitatorUrl === null
-      ? null
-      : request.facilitatorUrl ?? extras?.facilitatorUrl ?? DEFAULT_FACILITATOR_URL;
+	const requiredAmount = request.amount;
+	const network = request.network || extras?.network || 'solana';
+	const currencyCode = request.currency || extras?.currencyCode || 'USDC';
+	const assetAddress = request.assetAddress ?? extras?.assetAddress ?? null;
+	const assetType = request.assetType ?? extras?.assetType ?? null;
+	const memo = sanitizeMemo(request.memo ?? extras?.memo ?? null);
+	const resource = request.resource ?? extras?.resource ?? '/api/auctions';
+	const description =
+		request.description ??
+		extras?.description ??
+		`Payment required to post a message to ${extras?.groupName ?? 'the selected group'}.`;
+	const instructions =
+		request.instructions ??
+		(memo
+			? `Send ${requiredAmount} ${currencyCode} on ${network} to ${request.recipient} with memo "${memo}". Include the transaction signature in the X-PAYMENT-TXHASH header when resubmitting.`
+			: `Send ${requiredAmount} ${currencyCode} on ${network} to ${request.recipient}. Include the transaction signature in the X-PAYMENT-TXHASH header when resubmitting.`);
+	const checkoutUrl = request.checkoutUrl ?? extras?.checkoutUrl ?? null;
+	const facilitatorUrl =
+		extras?.facilitatorUrl === null
+			? null
+			: (request.facilitatorUrl ?? extras?.facilitatorUrl ?? DEFAULT_FACILITATOR_URL);
 
-  const body: Record<string, unknown> = {
-    error: 'Payment Required',
-    amount: requiredAmount,
-    currency: currencyCode,
-    recipient: request.recipient,
-    network,
-    instructions,
-    maxAmountRequired: requiredAmount,
-    currencyCode,
-    paymentAddress: request.recipient,
-    assetAddress: assetAddress ?? undefined,
-    assetType: assetType ?? undefined,
-    networkId: network,
-    paymentId: request.paymentId,
-    nonce: request.nonce,
-    expiresAt: request.expiresAt,
-    resource,
-    description,
-    accepts: [
-      {
-        scheme: 'onchain-transfer',
-        networkId: network,
-        currencyCode,
-        amount: requiredAmount,
-        recipient: request.recipient,
-        assetAddress: assetAddress ?? undefined,
-        assetType: assetType ?? undefined,
-        memo: memo ?? undefined
-      }
-    ]
-  };
+	const body: Record<string, unknown> = {
+		error: 'Payment Required',
+		amount: requiredAmount,
+		currency: currencyCode,
+		recipient: request.recipient,
+		network,
+		instructions,
+		maxAmountRequired: requiredAmount,
+		currencyCode,
+		paymentAddress: request.recipient,
+		assetAddress: assetAddress ?? undefined,
+		assetType: assetType ?? undefined,
+		networkId: network,
+		paymentId: request.paymentId,
+		nonce: request.nonce,
+		expiresAt: request.expiresAt,
+		resource,
+		description,
+		accepts: [
+			{
+				scheme: 'onchain-transfer',
+				networkId: network,
+				currencyCode,
+				amount: requiredAmount,
+				recipient: request.recipient,
+				assetAddress: assetAddress ?? undefined,
+				assetType: assetType ?? undefined,
+				memo: memo ?? undefined
+			}
+		]
+	};
 
-  if (extras?.groupName) {
-    body.groupName = extras.groupName;
-  }
+	if (extras?.groupName) {
+		body.groupName = extras.groupName;
+	}
 
-  if (checkoutUrl) {
-    body.checkout = checkoutUrl;
-  }
+	if (checkoutUrl) {
+		body.checkout = checkoutUrl;
+	}
 
-  if (facilitatorUrl) {
-    body.facilitator = facilitatorUrl;
-  }
+	if (facilitatorUrl) {
+		body.facilitator = facilitatorUrl;
+	}
 
-  if (memo) {
-    body.memo = memo;
-  }
+	if (memo) {
+		body.memo = memo;
+	}
 
-  const headers: Record<string, string> = {
-    'content-type': 'application/json',
-    'x-payment-required': 'true',
-    'x-payment-amount': requiredAmount.toString(),
-    'x-payment-currency': currencyCode,
-    'x-payment-recipient': request.recipient,
-    'x-payment-network': network,
-    'x-402-required': 'true',
-    'x-402-amount': requiredAmount.toString(),
-    'x-402-currency': currencyCode,
-    'x-402-recipient': request.recipient,
-    'x-402-network': network,
-    'x-payment-max-amount': requiredAmount.toString(),
-    'x-payment-id': request.paymentId,
-    'x-payment-nonce': request.nonce,
-    'x-payment-expires-at': request.expiresAt,
-    'x-402-max-amount': requiredAmount.toString(),
-    'x-402-payment-id': request.paymentId,
-    'x-402-nonce': request.nonce,
-    'x-402-expires-at': request.expiresAt
-  };
+	const headers: Record<string, string> = {
+		'content-type': 'application/json',
+		'x-payment-required': 'true',
+		'x-payment-amount': requiredAmount.toString(),
+		'x-payment-currency': currencyCode,
+		'x-payment-recipient': request.recipient,
+		'x-payment-network': network,
+		'x-402-required': 'true',
+		'x-402-amount': requiredAmount.toString(),
+		'x-402-currency': currencyCode,
+		'x-402-recipient': request.recipient,
+		'x-402-network': network,
+		'x-payment-max-amount': requiredAmount.toString(),
+		'x-payment-id': request.paymentId,
+		'x-payment-nonce': request.nonce,
+		'x-payment-expires-at': request.expiresAt,
+		'x-402-max-amount': requiredAmount.toString(),
+		'x-402-payment-id': request.paymentId,
+		'x-402-nonce': request.nonce,
+		'x-402-expires-at': request.expiresAt
+	};
 
-  if (memo) {
-    headers['x-payment-memo'] = memo;
-    headers['x-402-memo'] = memo;
-  }
+	if (memo) {
+		headers['x-payment-memo'] = memo;
+		headers['x-402-memo'] = memo;
+	}
 
-  if (assetAddress) {
-    headers['x-payment-asset-address'] = assetAddress;
-    headers['x-402-asset-address'] = assetAddress;
-  }
+	if (assetAddress) {
+		headers['x-payment-asset-address'] = assetAddress;
+		headers['x-402-asset-address'] = assetAddress;
+	}
 
-  if (assetType) {
-    headers['x-payment-asset-type'] = assetType;
-    headers['x-402-asset-type'] = assetType;
-  }
+	if (assetType) {
+		headers['x-payment-asset-type'] = assetType;
+		headers['x-402-asset-type'] = assetType;
+	}
 
-  return new Response(JSON.stringify(body), {
-    status: 402,
-    headers
-  });
+	return new Response(JSON.stringify(body), {
+		status: 402,
+		headers
+	});
 }

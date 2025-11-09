@@ -2,579 +2,593 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { AuctionRepository } from '$lib/server/db';
 import {
-  DEFAULT_SOLANA_RPC_URL,
-  normalizeCommitment,
-  verifySolanaPayment,
-  verifyWireTransactionSignature
+	DEFAULT_SOLANA_RPC_URL,
+	normalizeCommitment,
+	verifySolanaPayment,
+	verifyWireTransactionSignature
 } from '$lib/server/solana';
 import { TelegramBot } from '$lib/server/telegram';
+import { createSolanaRpc } from '@solana/kit';
+import type { Base64EncodedWireTransaction } from '@solana/transactions';
 import type { MessageRequest, MessageRequestStatus, PaymentRequestRecord } from '$lib/types';
 
 function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+	return value
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#39;');
 }
 
 function formatTelegramMessage(params: {
-  senderName: string | null;
-  amount: number;
-  message: string;
-  signature: string | null;
+	senderName: string | null;
+	amount: number;
+	message: string;
+	signature: string | null;
 }): string {
-  const lines = [
-    '🤖 <b>Paid Message</b>',
-    `<b>From:</b> ${escapeHtml(params.senderName ?? 'Anonymous Wallet')}`,
-    `<b>Amount:</b> $${params.amount.toFixed(2)} USDC`
-  ];
+	const lines = [
+		'🤖 <b>Paid Message</b>',
+		`<b>From:</b> ${escapeHtml(params.senderName ?? 'Anonymous Wallet')}`,
+		`<b>Amount:</b> $${params.amount.toFixed(2)} USDC`
+	];
 
-  if (params.signature) {
-    const shortHash = `${params.signature.slice(0, 10)}…${params.signature.slice(-8)}`;
-    lines.push(`<b>Tx:</b> <code>${escapeHtml(shortHash)}</code>`);
-  }
+	if (params.signature) {
+		const shortHash = `${params.signature.slice(0, 10)}…${params.signature.slice(-8)}`;
+		lines.push(`<b>Tx:</b> <code>${escapeHtml(shortHash)}</code>`);
+	}
 
-  lines.push('', `<b>Message</b>\n${escapeHtml(params.message)}`);
+	lines.push('', `<b>Message</b>\n${escapeHtml(params.message)}`);
 
-  return lines.join('\n');
+	return lines.join('\n');
 }
 
 async function updateMessageStatus(
-  repo: AuctionRepository,
-  message: MessageRequest,
-  status: MessageRequestStatus,
-  extras: Partial<Pick<MessageRequest, 'lastError' | 'telegramMessageId' | 'telegramChatId' | 'sentAt'>> = {}
+	repo: AuctionRepository,
+	message: MessageRequest,
+	status: MessageRequestStatus,
+	extras: Partial<
+		Pick<MessageRequest, 'lastError' | 'telegramMessageId' | 'telegramChatId' | 'sentAt'>
+	> = {}
 ): Promise<MessageRequest | null> {
-  return repo.updateMessageRequest(message.id, {
-    status,
-    lastError: extras.lastError ?? null,
-    telegramMessageId: extras.telegramMessageId ?? null,
-    telegramChatId: extras.telegramChatId ?? null,
-    sentAt: extras.sentAt ?? null
-  });
+	return repo.updateMessageRequest(message.id, {
+		status,
+		lastError: extras.lastError ?? null,
+		telegramMessageId: extras.telegramMessageId ?? null,
+		telegramChatId: extras.telegramChatId ?? null,
+		sentAt: extras.sentAt ?? null
+	});
 }
 
 async function deliverTelegramMessage(options: {
-  repo: AuctionRepository;
-  env: App.Platform['env'] | undefined;
-  request: PaymentRequestRecord;
-  message: MessageRequest;
-  signature: string | null;
+	repo: AuctionRepository;
+	env: App.Platform['env'] | undefined;
+	request: PaymentRequestRecord;
+	message: MessageRequest;
+	signature: string | null;
 }): Promise<MessageRequest | null> {
-  const { repo, env, request, message, signature } = options;
+	const { repo, env, request, message, signature } = options;
 
-  const paidMessage = await updateMessageStatus(repo, message, 'paid', { lastError: null });
-  const current = paidMessage ?? message;
+	const paidMessage = await updateMessageStatus(repo, message, 'paid', { lastError: null });
+	const current = paidMessage ?? message;
 
-  if (!env?.TELEGRAM_BOT_TOKEN) {
-    return current;
-  }
+	if (!env?.TELEGRAM_BOT_TOKEN) {
+		return current;
+	}
 
-  if (current.status === 'sent') {
-    return current;
-  }
+	if (current.status === 'sent') {
+		return current;
+	}
 
-  const group = await repo.getGroup(current.groupId);
-  if (!group) {
-    return updateMessageStatus(repo, current, 'failed', {
-      lastError: 'Telegram group not found for this message.'
-    });
-  }
+	const group = await repo.getGroup(current.groupId);
+	if (!group) {
+		return updateMessageStatus(repo, current, 'failed', {
+			lastError: 'Telegram group not found for this message.'
+		});
+	}
 
-  try {
-    const bot = new TelegramBot(String(env.TELEGRAM_BOT_TOKEN));
-    const formatted = formatTelegramMessage({
-      senderName: current.senderName,
-      amount: request.amount,
-      message: current.message,
-      signature
-    });
+	try {
+		const bot = new TelegramBot(String(env.TELEGRAM_BOT_TOKEN));
+		const formatted = formatTelegramMessage({
+			senderName: current.senderName,
+			amount: request.amount,
+			message: current.message,
+			signature
+		});
 
-    const response = await bot.sendMessage({
-      chat_id: group.telegramId,
-      text: formatted,
-      parse_mode: 'HTML',
-      disable_web_page_preview: true
-    });
+		const response = await bot.sendMessage({
+			chat_id: group.telegramId,
+			text: formatted,
+			parse_mode: 'HTML',
+			disable_web_page_preview: true
+		});
 
-    if (!response.ok || !response.result) {
-      return updateMessageStatus(repo, current, 'failed', {
-        lastError: response.description ?? 'Telegram API error'
-      });
-    }
+		if (!response.ok || !response.result) {
+			return updateMessageStatus(repo, current, 'failed', {
+				lastError: response.description ?? 'Telegram API error'
+			});
+		}
 
-    await repo.incrementGroupStats(group.id, request.amount);
+		await repo.incrementGroupStats(group.id, request.amount);
 
-    return updateMessageStatus(repo, current, 'sent', {
-      telegramMessageId: response.result.message_id,
-      telegramChatId: String(response.result.chat.id),
-      sentAt: new Date().toISOString(),
-      lastError: null
-    });
-  } catch (error) {
-    const messageError = error instanceof Error ? error.message : 'Telegram delivery failed';
-    return updateMessageStatus(repo, current, 'failed', { lastError: messageError });
-  }
+		return updateMessageStatus(repo, current, 'sent', {
+			telegramMessageId: response.result.message_id,
+			telegramChatId: String(response.result.chat.id),
+			sentAt: new Date().toISOString(),
+			lastError: null
+		});
+	} catch (error) {
+		const messageError = error instanceof Error ? error.message : 'Telegram delivery failed';
+		return updateMessageStatus(repo, current, 'failed', { lastError: messageError });
+	}
 }
 
 interface SubmitPaymentPayload {
-  paymentId?: string;
-  wireTransaction?: string;
-  signature?: string;
-  payer?: string | null;
-  resend?: boolean;
+	paymentId?: string;
+	wireTransaction?: string;
+	signature?: string;
+	payer?: string | null;
+	resend?: boolean;
 }
 
 export const GET: RequestHandler = async ({ url, platform }) => {
-  try {
-    const env = platform?.env;
-    if (!env?.DB) {
-      throw new Error('D1 database binding `DB` is not configured.');
-    }
+	try {
+		const env = platform?.env;
+		if (!env?.DB) {
+			throw new Error('D1 database binding `DB` is not configured.');
+		}
 
-    const wallet = url.searchParams.get('wallet');
-    if (!wallet || !wallet.trim()) {
-      return json({ error: 'wallet query parameter is required' }, { status: 400 });
-    }
+		const wallet = url.searchParams.get('wallet');
+		if (!wallet || !wallet.trim()) {
+			return json({ error: 'wallet query parameter is required' }, { status: 400 });
+		}
 
-    const repo = new AuctionRepository(env.DB);
-    const records = await repo.listPaymentsForWallet(wallet.trim());
+		const repo = new AuctionRepository(env.DB);
+		const records = await repo.listPaymentsForWallet(wallet.trim());
 
-    const rpcUrl = env.SOLANA_RPC_URL ?? DEFAULT_SOLANA_RPC_URL;
-    const commitment = normalizeCommitment(env.SOLANA_COMMITMENT);
-    const tokenMintAddress = env.SOLANA_USDC_MINT_ADDRESS ?? null;
-    const now = Date.now();
+		const rpcUrl = env.SOLANA_RPC_URL ?? DEFAULT_SOLANA_RPC_URL;
+		const commitment = normalizeCommitment(env.SOLANA_COMMITMENT);
+		const tokenMintAddress = env.SOLANA_USDC_MINT_ADDRESS ?? null;
+		const now = Date.now();
 
-    const enriched = [];
+		const enriched = [];
 
-    for (const record of records) {
-      let verification: Awaited<ReturnType<typeof verifySolanaPayment>> | null = null;
-      const messageRecord = record.message ?? null;
+		for (const record of records) {
+			let verification: Awaited<ReturnType<typeof verifySolanaPayment>> | null = null;
+			const messageRecord = record.message ?? null;
 
-      const expiresAt = Date.parse(record.request.expiresAt);
-      if (Number.isFinite(expiresAt) && expiresAt < now && record.request.status === 'pending') {
-        const expired = await repo.updatePaymentRequestStatus(record.request.id, { status: 'expired' });
-        record.request = expired ?? { ...record.request, status: 'expired' };
+			const expiresAt = Date.parse(record.request.expiresAt);
+			if (Number.isFinite(expiresAt) && expiresAt < now && record.request.status === 'pending') {
+				const expired = await repo.updatePaymentRequestStatus(record.request.id, {
+					status: 'expired'
+				});
+				record.request = expired ?? { ...record.request, status: 'expired' };
 
-        if (messageRecord && messageRecord.status !== 'sent') {
-          const failed = await updateMessageStatus(repo, messageRecord, 'failed', {
-            lastError: 'Payment request expired before confirmation.'
-          });
-          record.message = failed ?? messageRecord;
-        }
-      }
+				if (messageRecord && messageRecord.status !== 'sent') {
+					const failed = await updateMessageStatus(repo, messageRecord, 'failed', {
+						lastError: 'Payment request expired before confirmation.'
+					});
+					record.message = failed ?? messageRecord;
+				}
+			}
 
-      if (
-        record.pending &&
-        record.pending.signature &&
-        (record.pending.status === 'pending' || record.pending.status === 'submitted')
-      ) {
-        verification = await verifySolanaPayment({
-          signature: record.pending.signature,
-          rpcUrl,
-          recipient: record.request.recipient,
-          minAmount: record.request.amount,
-          expectedCurrency: record.request.currency,
-          tokenMintAddress,
-          commitment
-        });
+			if (
+				record.pending &&
+				record.pending.signature &&
+				(record.pending.status === 'pending' || record.pending.status === 'submitted')
+			) {
+				verification = await verifySolanaPayment({
+					signature: record.pending.signature,
+					rpcUrl,
+					recipient: record.request.recipient,
+					minAmount: record.request.amount,
+					expectedCurrency: record.request.currency,
+					tokenMintAddress,
+					commitment
+				});
 
-        if (verification) {
-          const confirmedPending = await repo.updatePendingPayment(record.pending.id, {
-            status: 'confirmed',
-            error: null,
-            payerAddress: verification.sender
-          });
-          const confirmedRequest = await repo.updatePaymentRequestStatus(record.request.id, {
-            status: 'confirmed',
-            lastSignature: verification.txHash,
-            lastPayerAddress: verification.sender
-          });
-          if (confirmedPending) {
-            record.pending = confirmedPending;
-          } else {
-            record.pending = {
-              ...record.pending,
-              status: 'confirmed',
-              error: null,
-              payerAddress: verification.sender,
-              updatedAt: new Date().toISOString()
-            };
-          }
-          if (confirmedRequest) {
-            record.request = confirmedRequest;
-          } else {
-            record.request = {
-              ...record.request,
-              status: 'confirmed',
-              lastSignature: verification.txHash,
-              lastPayerAddress: verification.sender,
-              updatedAt: new Date().toISOString()
-            };
-          }
+				if (verification) {
+					const confirmedPending = await repo.updatePendingPayment(record.pending.id, {
+						status: 'confirmed',
+						error: null,
+						payerAddress: verification.sender
+					});
+					const confirmedRequest = await repo.updatePaymentRequestStatus(record.request.id, {
+						status: 'confirmed',
+						lastSignature: verification.txHash,
+						lastPayerAddress: verification.sender
+					});
+					if (confirmedPending) {
+						record.pending = confirmedPending;
+					} else {
+						record.pending = {
+							...record.pending,
+							status: 'confirmed',
+							error: null,
+							payerAddress: verification.sender,
+							updatedAt: new Date().toISOString()
+						};
+					}
+					if (confirmedRequest) {
+						record.request = confirmedRequest;
+					} else {
+						record.request = {
+							...record.request,
+							status: 'confirmed',
+							lastSignature: verification.txHash,
+							lastPayerAddress: verification.sender,
+							updatedAt: new Date().toISOString()
+						};
+					}
 
-          if (messageRecord) {
-            const delivered = await deliverTelegramMessage({
-              repo,
-              env,
-              request: record.request,
-              message: record.message ?? messageRecord,
-              signature: verification.txHash ?? record.pending.signature
-            });
-            record.message = delivered ?? messageRecord;
-          }
-        }
-      }
+					if (messageRecord) {
+						const delivered = await deliverTelegramMessage({
+							repo,
+							env,
+							request: record.request,
+							message: record.message ?? messageRecord,
+							signature: verification.txHash ?? record.pending.signature
+						});
+						record.message = delivered ?? messageRecord;
+					}
+				}
+			}
 
-      enriched.push({ ...record, verification });
-    }
+			enriched.push({ ...record, verification });
+		}
 
-    return json({ payments: enriched });
-  } catch (error) {
-    console.error('Failed to load payment history', error);
-    return json({ error: 'Failed to load payment history' }, { status: 500 });
-  }
+		return json({ payments: enriched });
+	} catch (error) {
+		console.error('Failed to load payment history', error);
+		return json({ error: 'Failed to load payment history' }, { status: 500 });
+	}
 };
 
 export const POST: RequestHandler = async ({ request, platform }) => {
-  try {
-    const env = platform?.env;
-    if (!env?.DB) {
-      throw new Error('D1 database binding `DB` is not configured.');
-    }
+	try {
+		const env = platform?.env;
+		if (!env?.DB) {
+			throw new Error('D1 database binding `DB` is not configured.');
+		}
 
-    const payload = (await request.json()) as SubmitPaymentPayload;
-    const paymentId = typeof payload.paymentId === 'string' ? payload.paymentId.trim() : '';
-    const wireTransaction = typeof payload.wireTransaction === 'string' ? payload.wireTransaction.trim() : '';
-    const submittedSignature = typeof payload.signature === 'string' ? payload.signature.trim() : '';
-    const payer = typeof payload.payer === 'string' ? payload.payer.trim() : null;
-    const resend = Boolean(payload.resend);
+		const payload = (await request.json()) as SubmitPaymentPayload;
+		const paymentId = typeof payload.paymentId === 'string' ? payload.paymentId.trim() : '';
+		const wireTransaction =
+			typeof payload.wireTransaction === 'string' ? payload.wireTransaction.trim() : '';
+		const submittedSignature =
+			typeof payload.signature === 'string' ? payload.signature.trim() : '';
+		const payer = typeof payload.payer === 'string' ? payload.payer.trim() : null;
+		const resend = Boolean(payload.resend);
 
-    if (!paymentId) {
-      return json({ error: 'paymentId is required' }, { status: 400 });
-    }
+		if (!paymentId) {
+			return json({ error: 'paymentId is required' }, { status: 400 });
+		}
 
-    if (!resend && !wireTransaction && !submittedSignature) {
-      return json({ error: 'paymentId and a transaction payload are required' }, { status: 400 });
-    }
+		if (!resend && !wireTransaction && !submittedSignature) {
+			return json({ error: 'paymentId and a transaction payload are required' }, { status: 400 });
+		}
 
-    const repo = new AuctionRepository(env.DB);
-    const requestRecord = await repo.getPaymentRequestByPaymentId(paymentId);
+		const repo = new AuctionRepository(env.DB);
+		const requestRecord = await repo.getPaymentRequestByPaymentId(paymentId);
 
-    if (!requestRecord) {
-      return json({ error: 'Payment request not found' }, { status: 404 });
-    }
+		if (!requestRecord) {
+			return json({ error: 'Payment request not found' }, { status: 404 });
+		}
 
-    const messageRecord = await repo.getMessageRequestByPaymentId(paymentId);
+		const messageRecord = await repo.getMessageRequestByPaymentId(paymentId);
 
-    if (resend) {
-      if (!messageRecord) {
-        return json({ error: 'Message request not found for this payment' }, { status: 404 });
-      }
+		if (resend) {
+			if (!messageRecord) {
+				return json({ error: 'Message request not found for this payment' }, { status: 404 });
+			}
 
-      if (requestRecord.status !== 'confirmed') {
-        return json({ error: 'Payment is not confirmed yet' }, { status: 409 });
-      }
+			if (requestRecord.status !== 'confirmed') {
+				return json({ error: 'Payment is not confirmed yet' }, { status: 409 });
+			}
 
-      const delivered = await deliverTelegramMessage({
-        repo,
-        env,
-        request: requestRecord,
-        message: messageRecord,
-        signature: requestRecord.lastSignature ?? null
-      });
+			const delivered = await deliverTelegramMessage({
+				repo,
+				env,
+				request: requestRecord,
+				message: messageRecord,
+				signature: requestRecord.lastSignature ?? null
+			});
 
-      return json({
-        payment: {
-          request: requestRecord,
-          pending: null,
-          verification: null,
-          message: delivered ?? messageRecord
-        }
-      });
-    }
+			return json({
+				payment: {
+					request: requestRecord,
+					pending: null,
+					verification: null,
+					message: delivered ?? messageRecord
+				}
+			});
+		}
 
-    const expiresAt = Date.parse(requestRecord.expiresAt);
-    if (Number.isFinite(expiresAt) && expiresAt < Date.now() && requestRecord.status === 'pending') {
-      await repo.updatePaymentRequestStatus(requestRecord.id, { status: 'expired' });
-      return json({ error: 'Payment request has expired' }, { status: 410 });
-    }
+		const expiresAt = Date.parse(requestRecord.expiresAt);
+		if (
+			Number.isFinite(expiresAt) &&
+			expiresAt < Date.now() &&
+			requestRecord.status === 'pending'
+		) {
+			await repo.updatePaymentRequestStatus(requestRecord.id, { status: 'expired' });
+			return json({ error: 'Payment request has expired' }, { status: 410 });
+		}
 
-    let signature = submittedSignature;
-    let verification: Awaited<ReturnType<typeof verifyWireTransactionSignature>> | null = null;
+		let signature = submittedSignature;
+		let verification: Awaited<ReturnType<typeof verifyWireTransactionSignature>> | null = null;
 
-    if (wireTransaction) {
-      verification = await verifyWireTransactionSignature({
-        wireTransaction,
-        expectedSignature: submittedSignature || undefined,
-        expectedSigner: payer ?? undefined
-      });
+		if (wireTransaction) {
+			verification = await verifyWireTransactionSignature({
+				wireTransaction,
+				expectedSignature: submittedSignature || undefined,
+				expectedSigner: payer ?? undefined
+			});
 
-      if (!verification || !verification.signature) {
-        return json({ error: 'Unable to verify the submitted transaction signature' }, { status: 400 });
-      }
+			if (!verification || !verification.signature) {
+				return json(
+					{ error: 'Unable to verify the submitted transaction signature' },
+					{ status: 400 }
+				);
+			}
 
-      if (payer && !verification.signers.includes(payer)) {
-        return json({ error: 'Submitted transaction is not signed by the expected payer' }, { status: 400 });
-      }
+			if (payer && !verification.signers.includes(payer)) {
+				return json(
+					{ error: 'Submitted transaction is not signed by the expected payer' },
+					{ status: 400 }
+				);
+			}
 
-      signature = verification.signature;
-    } else if (!signature) {
-      return json({ error: 'A transaction signature is required' }, { status: 400 });
-    }
+			signature = verification.signature;
+		} else if (!signature) {
+			return json({ error: 'A transaction signature is required' }, { status: 400 });
+		}
 
-    const existing = signature ? await repo.getPendingPaymentBySignature(signature) : null;
-    if (existing && existing.requestId !== requestRecord.id) {
-      return json({ error: 'Transaction signature already submitted for another payment' }, { status: 409 });
-    }
+		const existing = signature ? await repo.getPendingPaymentBySignature(signature) : null;
+		if (existing && existing.requestId !== requestRecord.id) {
+			return json(
+				{ error: 'Transaction signature already submitted for another payment' },
+				{ status: 409 }
+			);
+		}
 
-    const rpcUrl = env.SOLANA_RPC_URL ?? DEFAULT_SOLANA_RPC_URL;
+		const rpcUrl = env.SOLANA_RPC_URL ?? DEFAULT_SOLANA_RPC_URL;
 
-    if (!wireTransaction) {
-      const pendingRecord = existing
-        ? await repo.updatePendingPayment(existing.id, {
-            status: 'submitted',
-            error: null,
-            wireTransaction: null,
-            signature,
-            payerAddress: payer ?? existing.payerAddress ?? null
-          })
-        : await repo.createPendingPayment({
-            requestId: requestRecord.id,
-            signature,
-            wireTransaction: null,
-            payerAddress: payer ?? null,
-            status: 'submitted'
-          });
+		if (!wireTransaction) {
+			const pendingRecord = existing
+				? await repo.updatePendingPayment(existing.id, {
+						status: 'submitted',
+						error: null,
+						wireTransaction: null,
+						signature,
+						payerAddress: payer ?? existing.payerAddress ?? null
+					})
+				: await repo.createPendingPayment({
+						requestId: requestRecord.id,
+						signature,
+						wireTransaction: null,
+						payerAddress: payer ?? null,
+						status: 'submitted'
+					});
 
-      if (!pendingRecord) {
-        throw new Error('Failed to persist pending payment record');
-      }
+			if (!pendingRecord) {
+				throw new Error('Failed to persist pending payment record');
+			}
 
-      const updatedRequest = await repo.updatePaymentRequestStatus(requestRecord.id, {
-        status: 'submitted',
-        lastSignature: signature,
-        lastPayerAddress: pendingRecord.payerAddress ?? null
-      });
+			const updatedRequest = await repo.updatePaymentRequestStatus(requestRecord.id, {
+				status: 'submitted',
+				lastSignature: signature,
+				lastPayerAddress: pendingRecord.payerAddress ?? null
+			});
 
-      if (messageRecord) {
-        await updateMessageStatus(repo, messageRecord, 'signature_saved', { lastError: null });
-      }
+			if (messageRecord) {
+				await updateMessageStatus(repo, messageRecord, 'signature_saved', { lastError: null });
+			}
 
-      const commitment = normalizeCommitment(env.SOLANA_COMMITMENT);
-      const tokenMintAddress = env.SOLANA_USDC_MINT_ADDRESS ?? null;
+			const commitment = normalizeCommitment(env.SOLANA_COMMITMENT);
+			const tokenMintAddress = env.SOLANA_USDC_MINT_ADDRESS ?? null;
 
-      const chainVerification = await verifySolanaPayment({
-        signature,
-        rpcUrl,
-        recipient: requestRecord.recipient,
-        minAmount: requestRecord.amount,
-        expectedCurrency: requestRecord.currency,
-        tokenMintAddress,
-        commitment
-      });
+			const chainVerification = await verifySolanaPayment({
+				signature,
+				rpcUrl,
+				recipient: requestRecord.recipient,
+				minAmount: requestRecord.amount,
+				expectedCurrency: requestRecord.currency,
+				tokenMintAddress,
+				commitment
+			});
 
-      if (chainVerification) {
-        const confirmedPending = await repo.updatePendingPayment(pendingRecord.id, {
-          status: 'confirmed',
-          error: null,
-          payerAddress: chainVerification.sender
-        });
-        const confirmedRequest = await repo.updatePaymentRequestStatus(requestRecord.id, {
-          status: 'confirmed',
-          lastSignature: chainVerification.txHash,
-          lastPayerAddress: chainVerification.sender
-        });
+			if (chainVerification) {
+				const confirmedPending = await repo.updatePendingPayment(pendingRecord.id, {
+					status: 'confirmed',
+					error: null,
+					payerAddress: chainVerification.sender
+				});
+				const confirmedRequest = await repo.updatePaymentRequestStatus(requestRecord.id, {
+					status: 'confirmed',
+					lastSignature: chainVerification.txHash,
+					lastPayerAddress: chainVerification.sender
+				});
 
-        let deliveredMessage = messageRecord ?? null;
-        if (messageRecord) {
-          deliveredMessage =
-            (await deliverTelegramMessage({
-              repo,
-              env,
-              request: confirmedRequest ?? updatedRequest ?? requestRecord,
-              message: messageRecord,
-              signature: chainVerification.txHash ?? signature
-            })) ?? messageRecord;
-        }
+				let deliveredMessage = messageRecord ?? null;
+				if (messageRecord) {
+					deliveredMessage =
+						(await deliverTelegramMessage({
+							repo,
+							env,
+							request: confirmedRequest ?? updatedRequest ?? requestRecord,
+							message: messageRecord,
+							signature: chainVerification.txHash ?? signature
+						})) ?? messageRecord;
+				}
 
-        return json({
-          payment: {
-            request: confirmedRequest ?? updatedRequest ?? requestRecord,
-            pending: confirmedPending ?? pendingRecord,
-            verification: chainVerification,
-            message: deliveredMessage
-          }
-        });
-      }
+				return json({
+					payment: {
+						request: confirmedRequest ?? updatedRequest ?? requestRecord,
+						pending: confirmedPending ?? pendingRecord,
+						verification: chainVerification,
+						message: deliveredMessage
+					}
+				});
+			}
 
-      return json({
-        payment: {
-          request: updatedRequest ?? requestRecord,
-          pending: pendingRecord,
-          verification: null,
-          message: messageRecord
-        }
-      });
-    }
+			return json({
+				payment: {
+					request: updatedRequest ?? requestRecord,
+					pending: pendingRecord,
+					verification: null,
+					message: messageRecord
+				}
+			});
+		}
 
-    const rpcResponse = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: `send-${Date.now()}`,
-        method: 'sendTransaction',
-        params: [wireTransaction, { encoding: 'base64', skipPreflight: false }]
-      })
-    });
+		const rpc = createSolanaRpc(rpcUrl);
 
-    const rpcPayload = (await rpcResponse.json()) as {
-      result?: string;
-      error?: { code?: number; message?: string };
-    };
+		try {
+			const encodedTransaction = wireTransaction as Base64EncodedWireTransaction;
+			await rpc
+				.sendTransaction(encodedTransaction, { encoding: 'base64', skipPreflight: false })
+				.send();
+		} catch (rpcError) {
+			const errorMessage =
+				rpcError instanceof Error ? rpcError.message : 'Failed to submit transaction to Solana RPC';
+			const pendingRecord = existing
+				? await repo.updatePendingPayment(existing.id, {
+						status: 'failed',
+						error: errorMessage,
+						wireTransaction,
+						payerAddress: payer ?? verification?.signers?.[0] ?? null
+					})
+				: await repo.createPendingPayment({
+						requestId: requestRecord.id,
+						signature,
+						wireTransaction,
+						payerAddress: payer ?? verification?.signers?.[0] ?? null,
+						status: 'failed',
+						error: errorMessage
+					});
 
-    if (!rpcResponse.ok || rpcPayload.error) {
-      const pendingRecord = existing
-        ? await repo.updatePendingPayment(existing.id, {
-            status: 'failed',
-            error: rpcPayload.error?.message ?? rpcResponse.statusText,
-            wireTransaction,
-            payerAddress: payer ?? verification?.signers?.[0] ?? null
-          })
-        : await repo.createPendingPayment({
-            requestId: requestRecord.id,
-            signature,
-            wireTransaction,
-            payerAddress: payer ?? verification?.signers?.[0] ?? null,
-            status: 'failed',
-            error: rpcPayload.error?.message ?? rpcResponse.statusText
-          });
+			if (!pendingRecord) {
+				throw new Error('Failed to persist pending payment record');
+			}
 
-      if (!pendingRecord) {
-        throw new Error('Failed to persist pending payment record');
-      }
+			await repo.updatePaymentRequestStatus(requestRecord.id, {
+				status: requestRecord.status,
+				lastSignature: signature,
+				lastPayerAddress: pendingRecord.payerAddress ?? null
+			});
 
-      await repo.updatePaymentRequestStatus(requestRecord.id, {
-        status: requestRecord.status,
-        lastSignature: signature,
-        lastPayerAddress: pendingRecord.payerAddress ?? null
-      });
+			if (messageRecord) {
+				await updateMessageStatus(repo, messageRecord, 'failed', {
+					lastError: errorMessage
+				});
+			}
 
-      if (messageRecord) {
-        await updateMessageStatus(repo, messageRecord, 'failed', {
-          lastError: rpcPayload.error?.message ?? rpcResponse.statusText
-        });
-      }
+			return json(
+				{
+					error: 'Failed to submit transaction to Solana RPC',
+					details: errorMessage,
+					payment: {
+						request: requestRecord,
+						pending: pendingRecord,
+						verification: null,
+						message: messageRecord
+					}
+				},
+				{ status: 502 }
+			);
+		}
 
-      return json(
-        {
-          error: 'Failed to submit transaction to Solana RPC',
-          details: rpcPayload.error?.message ?? rpcResponse.statusText,
-          payment: {
-            request: requestRecord,
-            pending: pendingRecord,
-            verification: null,
-            message: messageRecord
-          }
-        },
-        { status: 502 }
-      );
-    }
+		const pendingRecord = existing
+			? await repo.updatePendingPayment(existing.id, {
+					status: 'submitted',
+					error: null,
+					wireTransaction,
+					payerAddress: payer ?? verification?.signers[0] ?? null,
+					signature
+				})
+			: await repo.createPendingPayment({
+					requestId: requestRecord.id,
+					signature,
+					wireTransaction,
+					payerAddress: payer ?? verification?.signers[0] ?? null,
+					status: 'submitted'
+				});
 
-    const pendingRecord = existing
-      ? await repo.updatePendingPayment(existing.id, {
-          status: 'submitted',
-          error: null,
-          wireTransaction,
-          payerAddress: payer ?? verification?.signers[0] ?? null,
-          signature
-        })
-      : await repo.createPendingPayment({
-          requestId: requestRecord.id,
-          signature,
-          wireTransaction,
-          payerAddress: payer ?? verification?.signers[0] ?? null,
-          status: 'submitted'
-        });
+		if (!pendingRecord) {
+			throw new Error('Failed to persist pending payment record');
+		}
 
-    if (!pendingRecord) {
-      throw new Error('Failed to persist pending payment record');
-    }
+		const updatedRequest = await repo.updatePaymentRequestStatus(requestRecord.id, {
+			status: 'submitted',
+			lastSignature: signature,
+			lastPayerAddress: pendingRecord.payerAddress ?? null
+		});
 
-    const updatedRequest = await repo.updatePaymentRequestStatus(requestRecord.id, {
-      status: 'submitted',
-      lastSignature: signature,
-      lastPayerAddress: pendingRecord.payerAddress ?? null
-    });
+		if (messageRecord) {
+			await updateMessageStatus(repo, messageRecord, 'signature_saved', { lastError: null });
+		}
 
-    if (messageRecord) {
-      await updateMessageStatus(repo, messageRecord, 'signature_saved', { lastError: null });
-    }
+		const commitment = normalizeCommitment(env.SOLANA_COMMITMENT);
+		const tokenMintAddress = env.SOLANA_USDC_MINT_ADDRESS ?? null;
 
-    const commitment = normalizeCommitment(env.SOLANA_COMMITMENT);
-    const tokenMintAddress = env.SOLANA_USDC_MINT_ADDRESS ?? null;
+		const chainVerification = await verifySolanaPayment({
+			signature,
+			rpcUrl,
+			recipient: requestRecord.recipient,
+			minAmount: requestRecord.amount,
+			expectedCurrency: requestRecord.currency,
+			tokenMintAddress,
+			commitment
+		});
 
-    const chainVerification = await verifySolanaPayment({
-      signature,
-      rpcUrl,
-      recipient: requestRecord.recipient,
-      minAmount: requestRecord.amount,
-      expectedCurrency: requestRecord.currency,
-      tokenMintAddress,
-      commitment
-    });
+		if (chainVerification) {
+			await repo.updatePendingPayment(pendingRecord.id, {
+				status: 'confirmed',
+				error: null,
+				payerAddress: chainVerification.sender
+			});
+			const confirmedRequest = await repo.updatePaymentRequestStatus(requestRecord.id, {
+				status: 'confirmed',
+				lastSignature: chainVerification.txHash,
+				lastPayerAddress: chainVerification.sender
+			});
 
-    if (chainVerification) {
-      await repo.updatePendingPayment(pendingRecord.id, {
-        status: 'confirmed',
-        error: null,
-        payerAddress: chainVerification.sender
-      });
-      const confirmedRequest = await repo.updatePaymentRequestStatus(requestRecord.id, {
-        status: 'confirmed',
-        lastSignature: chainVerification.txHash,
-        lastPayerAddress: chainVerification.sender
-      });
+			let deliveredMessage = messageRecord ?? null;
+			if (messageRecord) {
+				deliveredMessage =
+					(await deliverTelegramMessage({
+						repo,
+						env,
+						request: confirmedRequest ?? updatedRequest ?? requestRecord,
+						message: messageRecord,
+						signature: chainVerification.txHash ?? signature
+					})) ?? messageRecord;
+			}
 
-      let deliveredMessage = messageRecord ?? null;
-      if (messageRecord) {
-        deliveredMessage =
-          (await deliverTelegramMessage({
-            repo,
-            env,
-            request: confirmedRequest ?? updatedRequest ?? requestRecord,
-            message: messageRecord,
-            signature: chainVerification.txHash ?? signature
-          })) ?? messageRecord;
-      }
+			return json({
+				payment: {
+					request: confirmedRequest ?? updatedRequest ?? requestRecord,
+					pending: {
+						...pendingRecord,
+						status: 'confirmed',
+						payerAddress: chainVerification.sender
+					},
+					verification: chainVerification,
+					message: deliveredMessage
+				}
+			});
+		}
 
-      return json({
-        payment: {
-          request: confirmedRequest ?? updatedRequest ?? requestRecord,
-          pending: {
-            ...pendingRecord,
-            status: 'confirmed',
-            payerAddress: chainVerification.sender
-          },
-          verification: chainVerification,
-          message: deliveredMessage
-        }
-      });
-    }
-
-    return json({
-      payment: {
-        request: updatedRequest ?? requestRecord,
-        pending: pendingRecord,
-        verification: null,
-        message: messageRecord
-      }
-    });
-  } catch (error) {
-    console.error('Failed to submit Solana payment', error);
-    return json({ error: 'Failed to submit Solana payment' }, { status: 500 });
-  }
+		return json({
+			payment: {
+				request: updatedRequest ?? requestRecord,
+				pending: pendingRecord,
+				verification: null,
+				message: messageRecord
+			}
+		});
+	} catch (error) {
+		console.error('Failed to submit Solana payment', error);
+		return json({ error: 'Failed to submit Solana payment' }, { status: 500 });
+	}
 };
