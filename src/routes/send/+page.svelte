@@ -9,15 +9,32 @@
     preselectedGroupId: number | null;
   };
 
-  const activeGroups = data.groups.filter((group) => group.active);
-  const firstGroupId =
-    data.preselectedGroupId && activeGroups.some((group) => group.id === data.preselectedGroupId)
-      ? String(data.preselectedGroupId)
-      : activeGroups.length > 0
-        ? String(activeGroups[0].id)
-        : '';
+  $: activeGroups = data.groups.filter((group) => group.active);
 
-  let selectedGroupId = firstGroupId;
+  function resolveDefaultGroupId(): string {
+    if (
+      data.preselectedGroupId &&
+      activeGroups.some((group) => group.id === data.preselectedGroupId)
+    ) {
+      return String(data.preselectedGroupId);
+    }
+
+    if (activeGroups.length > 0) {
+      return String(activeGroups[0].id);
+    }
+
+    return '';
+  }
+
+  $: defaultGroupId = resolveDefaultGroupId();
+
+  let selectedGroupId = '';
+  $: {
+    const hasSelection = activeGroups.some((group) => String(group.id) === selectedGroupId);
+    if (!hasSelection) {
+      selectedGroupId = defaultGroupId;
+    }
+  }
   let senderName = '';
   let message = '';
   let submitting = false;
