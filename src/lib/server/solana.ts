@@ -1,11 +1,12 @@
 import type { PaymentDetails } from '$lib/types';
 import {
-        createSolanaRpc,
-        getBase64Encoder,
-        getTransactionDecoder,
-        signature as toSignature
+	createSolanaRpc,
+	getBase64Decoder,
+	getTransactionDecoder,
+	signature as toSignature
 } from '@solana/kit';
-import * as ed25519 from '@noble/ed25519';
+import { address as toAddress, getPublicKeyFromAddress } from '@solana/addresses';
+import { signatureBytes, verifySignature } from '@solana/keys';
 import bs58 from 'bs58';
 
 interface RpcTokenAmount {
@@ -93,27 +94,38 @@ export async function verifyWireTransactionSignature(
 	options: VerifyWireTransactionSignatureOptions
 ): Promise<VerifiedWireTransactionSignature | null> {
 	try {
-                const wireBytes = getBase64Encoder().encode(options.wireTransaction);
-		const decoder = getTransactionDecoder();
-		const decoded = decoder.decode(wireBytes);
+		const base64Decoder = getBase64Decoder();
+		const wireBytes = base64Decoder.decode(
+			options.wireTransaction as unknown as Parameters<typeof base64Decoder.decode>[0]
+		);
+		const transactionDecoder = getTransactionDecoder();
+		const decoded = transactionDecoder.decode(
+			wireBytes as unknown as Parameters<typeof transactionDecoder.decode>[0]
+		);
 		const messageBytes = Uint8Array.from(decoded.messageBytes);
 		const signers: string[] = [];
 		let matchedSignature: string | null = null;
 
-		for (const [address, signatureBytes] of Object.entries(decoded.signatures)) {
-			if (!signatureBytes) {
+		for (const [signerAddress, encodedSignature] of Object.entries(decoded.signatures)) {
+			if (!encodedSignature) {
 				continue;
 			}
 
-			const signatureBase58 = bs58.encode(signatureBytes);
-			const publicKeyBytes = bs58.decode(address);
-			const isValid = await ed25519.verify(signatureBytes, messageBytes, publicKeyBytes);
+			const signatureBuffer = signatureBytes(
+				encodedSignature instanceof Uint8Array
+					? encodedSignature
+					: Uint8Array.from(encodedSignature)
+			);
+			const publicKey = await getPublicKeyFromAddress(toAddress(signerAddress));
+			const isValid = await verifySignature(publicKey, signatureBuffer, messageBytes);
 
 			if (!isValid) {
 				return null;
 			}
 
-			signers.push(address);
+			signers.push(signerAddress);
+
+			const signatureBase58 = bs58.encode(signatureBuffer);
 
 			if (!matchedSignature) {
 				matchedSignature = signatureBase58;
