@@ -7,12 +7,124 @@ import {
   verifySolanaPayment,
   verifyWireTransactionSignature
 } from '$lib/server/solana';
+import { TelegramBot } from '$lib/server/telegram';
+import type { MessageRequest, MessageRequestStatus, PaymentRequestRecord } from '$lib/types';
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatTelegramMessage(params: {
+  senderName: string | null;
+  amount: number;
+  message: string;
+  signature: string | null;
+}): string {
+  const lines = [
+    '🤖 <b>Paid Message</b>',
+    `<b>From:</b> ${escapeHtml(params.senderName ?? 'Anonymous Wallet')}`,
+    `<b>Amount:</b> $${params.amount.toFixed(2)} USDC`
+  ];
+
+  if (params.signature) {
+    const shortHash = `${params.signature.slice(0, 10)}…${params.signature.slice(-8)}`;
+    lines.push(`<b>Tx:</b> <code>${escapeHtml(shortHash)}</code>`);
+  }
+
+  lines.push('', `<b>Message</b>\n${escapeHtml(params.message)}`);
+
+  return lines.join('\n');
+}
+
+async function updateMessageStatus(
+  repo: AuctionRepository,
+  message: MessageRequest,
+  status: MessageRequestStatus,
+  extras: Partial<Pick<MessageRequest, 'lastError' | 'telegramMessageId' | 'telegramChatId' | 'sentAt'>> = {}
+): Promise<MessageRequest | null> {
+  return repo.updateMessageRequest(message.id, {
+    status,
+    lastError: extras.lastError ?? null,
+    telegramMessageId: extras.telegramMessageId ?? null,
+    telegramChatId: extras.telegramChatId ?? null,
+    sentAt: extras.sentAt ?? null
+  });
+}
+
+async function deliverTelegramMessage(options: {
+  repo: AuctionRepository;
+  env: App.Platform['env'] | undefined;
+  request: PaymentRequestRecord;
+  message: MessageRequest;
+  signature: string | null;
+}): Promise<MessageRequest | null> {
+  const { repo, env, request, message, signature } = options;
+
+  const paidMessage = await updateMessageStatus(repo, message, 'paid', { lastError: null });
+  const current = paidMessage ?? message;
+
+  if (!env?.TELEGRAM_BOT_TOKEN) {
+    return current;
+  }
+
+  if (current.status === 'sent') {
+    return current;
+  }
+
+  const group = await repo.getGroup(current.groupId);
+  if (!group) {
+    return updateMessageStatus(repo, current, 'failed', {
+      lastError: 'Telegram group not found for this message.'
+    });
+  }
+
+  try {
+    const bot = new TelegramBot(String(env.TELEGRAM_BOT_TOKEN));
+    const formatted = formatTelegramMessage({
+      senderName: current.senderName,
+      amount: request.amount,
+      message: current.message,
+      signature
+    });
+
+    const response = await bot.sendMessage({
+      chat_id: group.telegramId,
+      text: formatted,
+      parse_mode: 'HTML',
+      disable_web_page_preview: true
+    });
+
+    if (!response.ok || !response.result) {
+      return updateMessageStatus(repo, current, 'failed', {
+        lastError: response.description ?? 'Telegram API error'
+      });
+    }
+
+    await repo.incrementGroupStats(group.id, request.amount);
+
+    return updateMessageStatus(repo, current, 'sent', {
+      telegramMessageId: response.result.message_id,
+      telegramChatId: String(response.result.chat.id),
+      sentAt: new Date().toISOString(),
+      lastError: null
+    });
+  } catch (error) {
+    const messageError = error instanceof Error ? error.message : 'Telegram delivery failed';
+    return updateMessageStatus(repo, current, 'failed', { lastError: messageError });
+  }
+}
 
 interface SubmitPaymentPayload {
   paymentId?: string;
   wireTransaction?: string;
   signature?: string;
   payer?: string | null;
+  resend?: boolean;
 }
 
 export const GET: RequestHandler = async ({ url, platform }) => {
@@ -39,11 +151,19 @@ export const GET: RequestHandler = async ({ url, platform }) => {
 
     for (const record of records) {
       let verification: Awaited<ReturnType<typeof verifySolanaPayment>> | null = null;
+      const messageRecord = record.message ?? null;
 
       const expiresAt = Date.parse(record.request.expiresAt);
       if (Number.isFinite(expiresAt) && expiresAt < now && record.request.status === 'pending') {
         const expired = await repo.updatePaymentRequestStatus(record.request.id, { status: 'expired' });
         record.request = expired ?? { ...record.request, status: 'expired' };
+
+        if (messageRecord && messageRecord.status !== 'sent') {
+          const failed = await updateMessageStatus(repo, messageRecord, 'failed', {
+            lastError: 'Payment request expired before confirmation.'
+          });
+          record.message = failed ?? messageRecord;
+        }
       }
 
       if (
@@ -94,6 +214,17 @@ export const GET: RequestHandler = async ({ url, platform }) => {
               updatedAt: new Date().toISOString()
             };
           }
+
+          if (messageRecord) {
+            const delivered = await deliverTelegramMessage({
+              repo,
+              env,
+              request: record.request,
+              message: record.message ?? messageRecord,
+              signature: verification.txHash ?? record.pending.signature
+            });
+            record.message = delivered ?? messageRecord;
+          }
         }
       }
 
@@ -119,8 +250,13 @@ export const POST: RequestHandler = async ({ request, platform }) => {
     const wireTransaction = typeof payload.wireTransaction === 'string' ? payload.wireTransaction.trim() : '';
     const submittedSignature = typeof payload.signature === 'string' ? payload.signature.trim() : '';
     const payer = typeof payload.payer === 'string' ? payload.payer.trim() : null;
+    const resend = Boolean(payload.resend);
 
-    if (!paymentId || (!wireTransaction && !submittedSignature)) {
+    if (!paymentId) {
+      return json({ error: 'paymentId is required' }, { status: 400 });
+    }
+
+    if (!resend && !wireTransaction && !submittedSignature) {
       return json({ error: 'paymentId and a transaction payload are required' }, { status: 400 });
     }
 
@@ -129,6 +265,35 @@ export const POST: RequestHandler = async ({ request, platform }) => {
 
     if (!requestRecord) {
       return json({ error: 'Payment request not found' }, { status: 404 });
+    }
+
+    const messageRecord = await repo.getMessageRequestByPaymentId(paymentId);
+
+    if (resend) {
+      if (!messageRecord) {
+        return json({ error: 'Message request not found for this payment' }, { status: 404 });
+      }
+
+      if (requestRecord.status !== 'confirmed') {
+        return json({ error: 'Payment is not confirmed yet' }, { status: 409 });
+      }
+
+      const delivered = await deliverTelegramMessage({
+        repo,
+        env,
+        request: requestRecord,
+        message: messageRecord,
+        signature: requestRecord.lastSignature ?? null
+      });
+
+      return json({
+        payment: {
+          request: requestRecord,
+          pending: null,
+          verification: null,
+          message: delivered ?? messageRecord
+        }
+      });
     }
 
     const expiresAt = Date.parse(requestRecord.expiresAt);
@@ -194,6 +359,10 @@ export const POST: RequestHandler = async ({ request, platform }) => {
         lastPayerAddress: pendingRecord.payerAddress ?? null
       });
 
+      if (messageRecord) {
+        await updateMessageStatus(repo, messageRecord, 'signature_saved', { lastError: null });
+      }
+
       const commitment = normalizeCommitment(env.SOLANA_COMMITMENT);
       const tokenMintAddress = env.SOLANA_USDC_MINT_ADDRESS ?? null;
 
@@ -219,11 +388,24 @@ export const POST: RequestHandler = async ({ request, platform }) => {
           lastPayerAddress: chainVerification.sender
         });
 
+        let deliveredMessage = messageRecord ?? null;
+        if (messageRecord) {
+          deliveredMessage =
+            (await deliverTelegramMessage({
+              repo,
+              env,
+              request: confirmedRequest ?? updatedRequest ?? requestRecord,
+              message: messageRecord,
+              signature: chainVerification.txHash ?? signature
+            })) ?? messageRecord;
+        }
+
         return json({
           payment: {
             request: confirmedRequest ?? updatedRequest ?? requestRecord,
             pending: confirmedPending ?? pendingRecord,
-            verification: chainVerification
+            verification: chainVerification,
+            message: deliveredMessage
           }
         });
       }
@@ -232,7 +414,8 @@ export const POST: RequestHandler = async ({ request, platform }) => {
         payment: {
           request: updatedRequest ?? requestRecord,
           pending: pendingRecord,
-          verification: null
+          verification: null,
+          message: messageRecord
         }
       });
     }
@@ -280,6 +463,12 @@ export const POST: RequestHandler = async ({ request, platform }) => {
         lastPayerAddress: pendingRecord.payerAddress ?? null
       });
 
+      if (messageRecord) {
+        await updateMessageStatus(repo, messageRecord, 'failed', {
+          lastError: rpcPayload.error?.message ?? rpcResponse.statusText
+        });
+      }
+
       return json(
         {
           error: 'Failed to submit transaction to Solana RPC',
@@ -287,7 +476,8 @@ export const POST: RequestHandler = async ({ request, platform }) => {
           payment: {
             request: requestRecord,
             pending: pendingRecord,
-            verification: null
+            verification: null,
+            message: messageRecord
           }
         },
         { status: 502 }
@@ -320,6 +510,10 @@ export const POST: RequestHandler = async ({ request, platform }) => {
       lastPayerAddress: pendingRecord.payerAddress ?? null
     });
 
+    if (messageRecord) {
+      await updateMessageStatus(repo, messageRecord, 'signature_saved', { lastError: null });
+    }
+
     const commitment = normalizeCommitment(env.SOLANA_COMMITMENT);
     const tokenMintAddress = env.SOLANA_USDC_MINT_ADDRESS ?? null;
 
@@ -345,6 +539,18 @@ export const POST: RequestHandler = async ({ request, platform }) => {
         lastPayerAddress: chainVerification.sender
       });
 
+      let deliveredMessage = messageRecord ?? null;
+      if (messageRecord) {
+        deliveredMessage =
+          (await deliverTelegramMessage({
+            repo,
+            env,
+            request: confirmedRequest ?? updatedRequest ?? requestRecord,
+            message: messageRecord,
+            signature: chainVerification.txHash ?? signature
+          })) ?? messageRecord;
+      }
+
       return json({
         payment: {
           request: confirmedRequest ?? updatedRequest ?? requestRecord,
@@ -353,7 +559,8 @@ export const POST: RequestHandler = async ({ request, platform }) => {
             status: 'confirmed',
             payerAddress: chainVerification.sender
           },
-          verification: chainVerification
+          verification: chainVerification,
+          message: deliveredMessage
         }
       });
     }
@@ -362,7 +569,8 @@ export const POST: RequestHandler = async ({ request, platform }) => {
       payment: {
         request: updatedRequest ?? requestRecord,
         pending: pendingRecord,
-        verification: null
+        verification: null,
+        message: messageRecord
       }
     });
   } catch (error) {
