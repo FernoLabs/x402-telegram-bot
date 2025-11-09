@@ -434,41 +434,58 @@ function createWalletStore() {
       }
 
       if (
-        SolanaSignAndSendTransaction in wallet.features &&
-        account.features.includes(SolanaSignAndSendTransaction)
+        SolanaSignTransaction in wallet.features &&
+        account.features.includes(SolanaSignTransaction)
       ) {
-        const feature = wallet.features[
-          SolanaSignAndSendTransaction
-        ] as
-          | SolanaSignAndSendTransactionFeature[typeof SolanaSignAndSendTransaction]
+        const feature = wallet.features[SolanaSignTransaction] as
+          | SolanaSignTransactionFeature[typeof SolanaSignTransaction]
           | undefined;
         if (!feature) {
-          throw new Error('Connected wallet does not expose solana:signAndSendTransaction.');
+          throw new Error('Connected wallet does not expose solana:signTransaction.');
         }
         const featureMaxRetries = options.maxRetries;
         const featureMinContextSlot = options.minContextSlot;
-
-        const [result] = await feature.signAndSendTransaction({
+        const [result] = await feature.signTransaction({
           account,
           chain,
           transaction: serializedBytes,
           options: {
-            commitment: options.commitment,
-            skipPreflight: options.skipPreflight,
-            maxRetries: featureMaxRetries,
+            preflightCommitment: options.commitment,
             minContextSlot: featureMinContextSlot
           }
         });
 
-        const signatureBytes = result?.signature;
+        const signedBytes = result?.signedTransaction;
+        if (!signedBytes) {
+          throw new Error('Wallet did not return a signed transaction');
+        }
+
+        if (!options.rpc) {
+          throw new Error('An RPC client is required to send signed transactions');
+        }
+
+        const wireBytes =
+          signedBytes instanceof Uint8Array ? signedBytes : new Uint8Array(signedBytes);
+        const decodedTransaction = getTransactionDecoder().decode(wireBytes);
+        const signatureBytes = decodedTransaction.signatures[payerAddress];
         if (!signatureBytes) {
-          throw new Error('Wallet did not return a transaction signature');
+          throw new Error('Wallet did not provide a signature for the fee payer');
         }
 
         const signature = bs58.encode(signatureBytes);
         const wireTransaction = resolveWireTransaction(signature, payerAddress);
 
-        if (options.rpc && options.latestBlockhash) {
+        await options.rpc
+          .sendTransaction(wireTransaction, {
+            encoding: 'base64',
+            skipPreflight: options.skipPreflight,
+            maxRetries: rpcMaxRetries,
+            minContextSlot: rpcMinContextSlot,
+            preflightCommitment: options.commitment
+          })
+          .send();
+
+        if (options.latestBlockhash) {
           await waitForTransactionConfirmation({
             rpc: options.rpc,
             signature,
@@ -540,7 +557,7 @@ function createWalletStore() {
           | SolanaSignTransactionFeature[typeof SolanaSignTransaction]
           | undefined;
         if (!feature) {
-          throw new Error('Connected wallet does not expose solana:signTransaction.');
+          throw new Error('Connected wallet does not expose solana:signAndSendTransaction.');
         }
 
         const [result] = await feature.signTransaction({
