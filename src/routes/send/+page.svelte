@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { walletStore } from '@svelte-on-solana/wallet-adapter-core';
-  import { workSpace } from '@svelte-on-solana/wallet-adapter-ui';
+  import { browser } from '$app/environment';
   import {
+    Connection,
     LAMPORTS_PER_SOL,
     PublicKey,
     SystemProgram,
@@ -16,6 +16,7 @@
   } from '@solana/spl-token';
   import { Buffer } from 'buffer';
   import type { Auction, Group } from '$lib/types';
+  import { wallet } from '$lib/wallet/wallet.svelte';
 
   interface PaymentAcceptOption {
     scheme?: string;
@@ -101,7 +102,8 @@
   let lastActivePaymentId: string | null = null;
   let walletConnected = false;
   let walletPublicKey: PublicKey | null = null;
-  let solanaConnection: import('@solana/web3.js').Connection | null = null;
+  let solanaConnection: Connection | null = null;
+  let currentRpcEndpoint: string | null = null;
   let walletPaymentSupported = false;
   let canUseWallet = false;
   const formatUsd = (value: number) => currencyFormatter.format(value);
@@ -512,8 +514,7 @@
   }
 
   async function payWithWallet(): Promise<void> {
-    const wallet = $walletStore;
-    const workspace = $workSpace;
+    const state = $wallet;
     const request = activePayment;
 
     if (!request) {
@@ -521,13 +522,13 @@
       return;
     }
 
-    if (!wallet?.connected || !wallet.publicKey) {
+    if (!state.connected || !state.publicKey) {
       walletError = 'Connect a Solana wallet before paying.';
       return;
     }
 
-    if (!workspace?.connection) {
-      walletError = 'Wallet connection is still initializing. Try again in a moment.';
+    if (!solanaConnection) {
+      walletError = 'Solana connection is still initializing. Try again in a moment.';
       return;
     }
 
@@ -556,9 +557,9 @@
     walletProcessing = true;
 
     try {
-      const connection = workspace.connection;
+      const connection = solanaConnection;
       const latestBlockhash = await connection.getLatestBlockhash('confirmed');
-      const payer = wallet.publicKey;
+      const payer = state.publicKey;
       const transaction = new Transaction({
         feePayer: payer,
         blockhash: latestBlockhash.blockhash,
@@ -623,9 +624,7 @@
         transaction.add(memoInstruction);
       }
 
-      const signature = await wallet.sendTransaction(transaction, connection, {
-        preflightCommitment: 'confirmed'
-      });
+      const signature = await wallet.sendTransaction(transaction, connection);
 
       walletStatus = 'Transaction submitted. Awaiting confirmation…';
 
@@ -686,9 +685,12 @@
   $: submitButtonLabel = pendingPayments.length > 0 ? 'Submit payment confirmation' : 'Generate payment instructions';
   $: currentSignatureValue = activePaymentId ? signatureInputs[activePaymentId] ?? '' : '';
   $: currentSignatureError = activePaymentId ? signatureErrors[activePaymentId] ?? null : null;
-  $: walletConnected = $walletStore?.connected ?? false;
-  $: walletPublicKey = $walletStore?.publicKey ?? null;
-  $: solanaConnection = $workSpace?.connection ?? null;
+  $: walletConnected = $wallet.connected;
+  $: walletPublicKey = $wallet.publicKey ?? null;
+  $: if (browser && $wallet.rpcEndpoint && $wallet.rpcEndpoint !== currentRpcEndpoint) {
+    currentRpcEndpoint = $wallet.rpcEndpoint;
+    solanaConnection = new Connection($wallet.rpcEndpoint, 'confirmed');
+  }
   $: walletPaymentSupported = isSupportedWalletPayment(activePayment);
   $: canUseWallet = Boolean(
     walletPaymentSupported && walletConnected && walletPublicKey && solanaConnection

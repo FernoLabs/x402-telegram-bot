@@ -1,11 +1,7 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { writable } from 'svelte/store';
   import { page } from '$app/stores';
   import favicon from '$lib/assets/favicon.svg';
-  import '@svelte-on-solana/wallet-adapter-ui/styles.css';
-  import { ConnectionProvider, WalletMultiButton, WalletProvider } from '@svelte-on-solana/wallet-adapter-ui';
-  import type { Adapter } from '@solana/wallet-adapter-base';
+  import { WalletButton, WalletProvider } from '$lib/components';
 
   let { children } = $props();
 
@@ -15,36 +11,13 @@
     { href: '/groups', label: 'Groups' },
     { href: '/send', label: 'Send a Message' }
   ];
-
-  const localStorageKey = 'walletAdapter';
-  const solanaEndpoint = 'https://api.mainnet-beta.solana.com';
-  const walletsStore = writable<Adapter[]>([]);
-  const walletUiReady = writable(false);
-
-  onMount(async () => {
-    const {
-      PhantomWalletAdapter,
-      SolflareWalletAdapter,
-      UnsafeBurnerWalletAdapter
-    } = await import('@solana/wallet-adapter-wallets');
-
-    walletsStore.set([
-      new PhantomWalletAdapter(),
-      new SolflareWalletAdapter(),
-      new UnsafeBurnerWalletAdapter()
-    ]);
-    walletUiReady.set(true);
-  });
 </script>
 
 <svelte:head>
   <link rel="icon" href={favicon} />
 </svelte:head>
 
-{#if $walletUiReady}
-  <WalletProvider {localStorageKey} wallets={$walletsStore} autoConnect />
-  <ConnectionProvider network={solanaEndpoint} config="confirmed" />
-{/if}
+<WalletProvider rpcEndpoint="https://api.mainnet-beta.solana.com" />
 
 <div class="app-shell">
   <header>
@@ -65,11 +38,7 @@
         </ul>
       </nav>
       <div class="wallet-actions" aria-live="polite">
-        {#if $walletUiReady}
-          <WalletMultiButton />
-        {:else}
-          <span class="wallet-placeholder">Loading wallet…</span>
-        {/if}
+        <WalletButton />
       </div>
     </div>
   </header>
@@ -147,11 +116,6 @@
   .wallet-actions {
     display: flex;
     align-items: center;
-  }
-
-  .wallet-placeholder {
-    font-size: 0.9rem;
-    color: #64748b;
   }
 
   main {
