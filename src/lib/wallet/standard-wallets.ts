@@ -32,12 +32,14 @@ export async function getStandardWallets(): Promise<StandardWallet[]> {
   const result = await nav.wallets?.get?.();
 
   if (Array.isArray(result)) {
-    detected.push(...result);
+    detected.push(
+      ...result.filter((wallet) => wallet.name && wallet.name.toLowerCase().includes('phantom'))
+    );
   }
 
   const legacy = (globalThis as unknown as { solana?: LegacySolana }).solana;
-  if (legacy?.connect && legacy?.disconnect) {
-    const name = legacy.isPhantom ? 'Phantom' : legacy.isSolflare ? 'Solflare' : 'Legacy Wallet';
+  if (legacy?.isPhantom && legacy.connect && legacy.disconnect) {
+    const name = 'Phantom';
     const wallet: StandardWallet = {
       name,
       icon: FALLBACK_ICON,
