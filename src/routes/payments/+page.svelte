@@ -163,12 +163,23 @@
     return null;
   };
 
+  const usdFormatter = new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+
   const formatAmountForCurrency = (amount: number, currency: string): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency,
+    const normalized = currency ? currency.toUpperCase() : '';
+
+    if (normalized === 'USDC' || normalized === 'USD') {
+      return usdFormatter.format(amount);
+    }
+
+    return new Intl.NumberFormat(undefined, {
       minimumFractionDigits: 2,
-      maximumFractionDigits: 2
+      maximumFractionDigits: 6
     }).format(amount);
   };
 
