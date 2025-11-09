@@ -1,5 +1,5 @@
 import { browser } from '$app/environment';
-import type { Transaction, VersionedTransaction } from '@solana/web3.js';
+import { getTransactionEncoder, type Transaction } from '@solana/transactions';
 import * as MWA from './mwa-protocol';
 
 interface PendingRequest {
@@ -176,81 +176,109 @@ export class MWASession {
     return payload;
   }
 
-  async signAndSendTransactions(
-    transactions: (Transaction | VersionedTransaction)[]
-  ): Promise<string[]> {
+  async signAndSendTransactions(transactions: Transaction[]): Promise<string[]> {
     if (!this.authorized) {
       throw new Error('MWA session is not authorized');
     }
 
-    const payloads = transactions.map((tx) => MWA.base64Encode(tx.serialize()));
+    const payloads = transactions.map((tx) => {
+      const encoded = getTransactionEncoder().encode(tx);
+      return MWA.base64Encode(encoded instanceof Uint8Array ? encoded : new Uint8Array(encoded));
+    });
     const result = await this.sendRequest('sign_and_send_transactions', {
       payloads
     });
 
-    const signatures = Array.isArray(result?.signatures)
-      ? (result.signatures as string[])
-      : Array.isArray(result)
-        ? (result as string[])
-        : [];
+    if (Array.isArray(result)) {
+      return result.filter((value): value is string => typeof value === 'string');
+    }
 
-    return signatures;
+    if (result && typeof result === 'object') {
+      const candidate = (result as { signatures?: unknown }).signatures;
+      if (Array.isArray(candidate)) {
+        return candidate.filter((value): value is string => typeof value === 'string');
+      }
+    }
+
+    return [];
   }
 
   disconnect(): void {
     this.ws?.close();
     this.ws = null;
+    this.sessionKeypair = null;
     this.sharedSecret = null;
     this.authorized = false;
     this.authToken = null;
     this.accounts = [];
-    this.sequenceNumberReceived = 1;
     this.sequenceNumberSent = 1;
+    this.sequenceNumberReceived = 1;
     this.pendingRequests.clear();
     this.connected = false;
     this.connecting = false;
   }
 
-  private async sendRequest(method: string, params: unknown): Promise<any> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.sharedSecret) {
+  private handleError(event: Event): void {
+    console.error('MWA session error', event);
+    this.error = 'Connection error';
+  }
+
+  private handleClose(): void {
+    this.ws = null;
+    this.sessionKeypair = null;
+    this.sharedSecret = null;
+    this.authorized = false;
+    this.authToken = null;
+    this.accounts = [];
+    this.sequenceNumberSent = 1;
+    this.sequenceNumberReceived = 1;
+    this.pendingRequests.clear();
+    this.connected = false;
+    this.connecting = false;
+  }
+
+  private async sendRequest(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
+    if (!this.ws || !this.sharedSecret) {
       throw new Error('MWA session is not connected');
     }
 
     const id = this.requestId++;
-    const request = MWA.createJsonRpcRequest(method, params, id);
-    const message = new TextEncoder().encode(request);
+    const request: {
+      jsonrpc: '2.0';
+      id: number;
+      method: string;
+      params: Record<string, unknown>;
+    } = {
+      jsonrpc: '2.0',
+      id,
+      method,
+      params
+    };
+
+    const message = new TextEncoder().encode(JSON.stringify(request));
     const encrypted = await MWA.encryptMessage(message, this.sharedSecret, this.sequenceNumberSent);
     this.sequenceNumberSent += 1;
 
-    const responsePromise = new Promise<unknown>((resolve, reject) => {
+    this.ws.send(encrypted);
+
+    return await new Promise((resolve, reject) => {
       this.pendingRequests.set(id, { resolve, reject });
       setTimeout(() => {
         if (this.pendingRequests.has(id)) {
           this.pendingRequests.delete(id);
-          reject(new Error('MWA request timed out'));
+          reject(new Error('Wallet did not respond'));
         }
-      }, 20000);
+      }, 30_000);
     });
-
-    this.ws.send(encrypted);
-    return responsePromise;
   }
 
-  private handleError(_event: Event): void {
-    this.error = 'WebSocket error';
-    this.connecting = false;
-  }
-
-  private handleClose(): void {
-    this.connected = false;
-    this.connecting = false;
-    this.ws = null;
-  }
-
-  private base64UrlDecode(str: string): Uint8Array {
-    const base64 = str.replace(/-/g, '+').replace(/_/g, '/');
-    const padding = '='.repeat((4 - (base64.length % 4)) % 4);
-    const binaryString = atob(base64 + padding);
-    return Uint8Array.from(binaryString, (c) => c.charCodeAt(0));
+  private base64UrlDecode(value: string): Uint8Array {
+    const padded = value.replace(/-/g, '+').replace(/_/g, '/');
+    const decoded = atob(padded);
+    const bytes = new Uint8Array(decoded.length);
+    for (let i = 0; i < decoded.length; i += 1) {
+      bytes[i] = decoded.charCodeAt(i);
+    }
+    return bytes;
   }
 }

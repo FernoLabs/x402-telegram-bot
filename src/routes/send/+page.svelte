@@ -1,22 +1,32 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import {
-    Connection,
-    LAMPORTS_PER_SOL,
-    PublicKey,
-    SystemProgram,
-    Transaction,
-    TransactionInstruction
-  } from '@solana/web3.js';
+    address,
+    appendTransactionMessageInstructions,
+    compileTransaction,
+    createNoopSigner,
+    createSolanaRpc,
+    createTransactionMessage,
+    lamports,
+    pipe,
+    setTransactionMessageFeePayer,
+    setTransactionMessageLifetimeUsingBlockhash,
+    type Address,
+    type Instruction,
+    type Transaction
+  } from '@solana/kit';
   import {
-    createAssociatedTokenAccountInstruction,
-    createTransferInstruction,
-    getAssociatedTokenAddress,
-    getMint
-  } from '@solana/spl-token';
-  import { Buffer } from 'buffer';
+    findAssociatedTokenPda,
+    fetchMint,
+    getCreateAssociatedTokenIdempotentInstruction,
+    getTransferInstruction,
+    TOKEN_PROGRAM_ADDRESS
+  } from '@solana-program/token';
+  import { getTransferSolInstruction } from '@solana-program/system';
+  import { getAddMemoInstruction } from '@solana-program/memo';
   import type { Auction, Group } from '$lib/types';
   import { wallet } from '$lib/wallet/wallet.svelte';
+  import { waitForTransactionConfirmation } from '$lib/wallet/transaction-confirmation';
 
   interface PaymentAcceptOption {
     scheme?: string;
@@ -57,8 +67,6 @@
     internalId: string;
     createdAt: number;
   }
-
-  const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
 
   const DEFAULT_FACILITATOR_URL = 'https://facilitator.payai.network/pay';
 
@@ -101,8 +109,8 @@
   let walletError: string | null = null;
   let lastActivePaymentId: string | null = null;
   let walletConnected = false;
-  let walletPublicKey: PublicKey | null = null;
-  let solanaConnection: Connection | null = null;
+  let walletPublicKey: Address | null = null;
+  let rpc: ReturnType<typeof createSolanaRpc> | null = null;
   let currentRpcEndpoint: string | null = null;
   let walletPaymentSupported = false;
   let canUseWallet = false;
@@ -207,6 +215,91 @@
       }
     }
     return null;
+  };
+
+  const LAMPORT_DECIMALS = 9;
+
+  const expandNumberToDecimalString = (value: number): string => {
+    if (!Number.isFinite(value)) {
+      throw new Error('Cannot convert a non-finite number to base units.');
+    }
+
+    const sign = value < 0 ? '-' : '';
+    const absolute = Math.abs(value);
+    if (absolute === 0) {
+      return '0';
+    }
+
+    const raw = absolute.toString();
+    if (!raw.includes('e') && !raw.includes('E')) {
+      return sign ? `${sign}${raw}` : raw;
+    }
+
+    const [mantissa = '0', exponentPart = '0'] = raw.split(/e/i);
+    const exponent = Number.parseInt(exponentPart, 10);
+    if (!Number.isFinite(exponent)) {
+      throw new Error('Cannot convert amount with malformed exponent.');
+    }
+
+    const [integerPartRaw, fractionalPartRaw = ''] = mantissa.split('.');
+    const digits = `${integerPartRaw}${fractionalPartRaw}`.replace(/^0+(?=\d)/, '') || '0';
+    let decimalIndex = integerPartRaw.length + exponent;
+
+    if (decimalIndex <= 0) {
+      const zeros = '0'.repeat(Math.abs(decimalIndex));
+      return `${sign}0.${zeros}${digits}`;
+    }
+
+    if (decimalIndex >= digits.length) {
+      const zeros = '0'.repeat(decimalIndex - digits.length);
+      return `${sign}${digits}${zeros}`;
+    }
+
+    return `${sign}${digits.slice(0, decimalIndex)}.${digits.slice(decimalIndex)}`;
+  };
+
+  const decimalToBaseUnits = (value: number, decimals: number): bigint => {
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error('Amounts must be non-negative finite numbers.');
+    }
+    if (!Number.isInteger(decimals) || decimals < 0) {
+      throw new Error('Token decimals must be a non-negative integer.');
+    }
+
+    if (value === 0) {
+      return 0n;
+    }
+
+    const decimalString = expandNumberToDecimalString(value);
+    if (decimalString.startsWith('-')) {
+      throw new Error('Amounts must be non-negative.');
+    }
+
+    const [integerPartRaw, fractionalPartRaw = ''] = decimalString.split('.');
+    const factor = 10n ** BigInt(decimals);
+    const integerComponent = integerPartRaw.length > 0 ? BigInt(integerPartRaw) : 0n;
+    let baseUnits = integerComponent * factor;
+
+    if (decimals === 0) {
+      return baseUnits;
+    }
+
+    const digits = fractionalPartRaw.replace(/[^0-9]/g, '');
+    const paddedDigits = `${digits}${'0'.repeat(decimals)}`.slice(0, decimals);
+    if (paddedDigits.length > 0) {
+      baseUnits += BigInt(paddedDigits);
+    }
+
+    const remainderDigits = digits.slice(decimals);
+    if (remainderDigits.length > 0) {
+      const remainderValue = BigInt(remainderDigits);
+      const threshold = 5n * 10n ** BigInt(remainderDigits.length - 1);
+      if (remainderValue >= threshold) {
+        baseUnits += 1n;
+      }
+    }
+
+    return baseUnits;
   };
 
   const resolveCurrency = (request: PaymentRequestData): string | null => {
@@ -527,8 +620,8 @@
       return;
     }
 
-    if (!solanaConnection) {
-      walletError = 'Solana connection is still initializing. Try again in a moment.';
+    if (!rpc) {
+      walletError = 'Solana RPC connection is still initializing. Try again in a moment.';
       return;
     }
 
@@ -557,85 +650,122 @@
     walletProcessing = true;
 
     try {
-      const connection = solanaConnection;
-      const latestBlockhash = await connection.getLatestBlockhash('confirmed');
-      const payer = state.publicKey;
-      const transaction = new Transaction({
-        feePayer: payer,
-        blockhash: latestBlockhash.blockhash,
-        lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
-      });
+      const payerAddress = state.publicKey;
+      const payerSigner = createNoopSigner(payerAddress);
+      const { value: latestBlockhash } = await rpc.getLatestBlockhash().send();
+
+      const instructions: Instruction[] = [];
 
       if (currency === 'SOL') {
-        let lamports = Math.round(amount * LAMPORTS_PER_SOL);
-        if (!Number.isFinite(lamports) || lamports <= 0) {
+        const lamportsValue = decimalToBaseUnits(amount, LAMPORT_DECIMALS);
+        if (lamportsValue <= 0n) {
           throw new Error('The SOL amount is too small to send.');
         }
 
-        const recipient = new PublicKey(recipientAddress);
-        transaction.add(
-          SystemProgram.transfer({ fromPubkey: payer, toPubkey: recipient, lamports })
-        );
+        const transferInstruction = getTransferSolInstruction({
+          source: payerSigner,
+          destination: address(recipientAddress),
+          amount: lamports(lamportsValue)
+        });
+
+        instructions.push(transferInstruction);
       } else {
         const mintAddress = request.assetAddress;
         if (!mintAddress) {
           throw new Error('This payment requires a token mint address.');
         }
 
-        const mint = new PublicKey(mintAddress);
-        const payerAta = await getAssociatedTokenAddress(mint, payer);
-        const recipientWallet = new PublicKey(recipientAddress);
-        const recipientAta = await getAssociatedTokenAddress(mint, recipientWallet);
+        const mintAddressValue = address(mintAddress);
+        const recipientAddressValue = address(recipientAddress);
 
-        const payerAccountInfo = await connection.getAccountInfo(payerAta, 'confirmed');
-        if (!payerAccountInfo) {
-          transaction.add(
-            createAssociatedTokenAccountInstruction(payer, payerAta, payer, mint)
-          );
+        const payerAta = await findAssociatedTokenPda({
+          owner: payerAddress,
+          mint: mintAddressValue,
+          tokenProgram: TOKEN_PROGRAM_ADDRESS
+        });
+        const recipientAta = await findAssociatedTokenPda({
+          owner: recipientAddressValue,
+          mint: mintAddressValue,
+          tokenProgram: TOKEN_PROGRAM_ADDRESS
+        });
+        const payerAtaAddress = payerAta[0];
+        const recipientAtaAddress = recipientAta[0];
+
+        const [payerAccountInfo, recipientAccountInfo] = await Promise.all([
+          rpc.getAccountInfo(payerAtaAddress, { commitment: 'confirmed' }).send(),
+          rpc.getAccountInfo(recipientAtaAddress, { commitment: 'confirmed' }).send()
+        ]);
+
+        if (!payerAccountInfo.value) {
+          const instruction = getCreateAssociatedTokenIdempotentInstruction({
+            payer: payerSigner,
+            ata: payerAtaAddress,
+            owner: payerAddress,
+            mint: mintAddressValue
+          });
+          instructions.push(instruction);
         }
 
-        const recipientAccountInfo = await connection.getAccountInfo(recipientAta, 'confirmed');
-        if (!recipientAccountInfo) {
-          transaction.add(
-            createAssociatedTokenAccountInstruction(payer, recipientAta, recipientWallet, mint)
-          );
+        if (!recipientAccountInfo.value) {
+          const instruction = getCreateAssociatedTokenIdempotentInstruction({
+            payer: payerSigner,
+            ata: recipientAtaAddress,
+            owner: recipientAddressValue,
+            mint: mintAddressValue
+          });
+          instructions.push(instruction);
         }
 
-        const mintInfo = await getMint(connection, mint);
-        const decimals = typeof mintInfo.decimals === 'number' ? mintInfo.decimals : 6;
-        const multiplier = Math.pow(10, decimals);
-        const baseUnits = BigInt(Math.round(amount * multiplier));
+        const mintInfo = await fetchMint(rpc, mintAddressValue).catch(() => null);
+        const decimals = mintInfo?.data.decimals ?? 6;
+        const baseUnits = decimalToBaseUnits(amount, decimals);
 
         if (baseUnits <= 0n) {
           throw new Error('The token amount is too small to transfer.');
         }
 
-        transaction.add(
-          createTransferInstruction(payerAta, recipientAta, payer, baseUnits)
-        );
+        const transferInstruction = getTransferInstruction({
+          source: payerAtaAddress,
+          destination: recipientAtaAddress,
+          authority: payerSigner,
+          amount: baseUnits
+        });
+
+        instructions.push(transferInstruction);
       }
 
       if (memo) {
-        const memoInstruction = new TransactionInstruction({
-          keys: [],
-          programId: MEMO_PROGRAM_ID,
-          data: Buffer.from(new TextEncoder().encode(memo))
-        });
-        transaction.add(memoInstruction);
+        const memoInstruction = getAddMemoInstruction({ memo });
+        instructions.push(memoInstruction);
       }
 
-      const signature = await wallet.sendTransaction(transaction, connection);
+      if (instructions.length === 0) {
+        throw new Error('Unable to create a payment transaction without instructions.');
+      }
+
+      const transactionMessage = pipe(
+        createTransactionMessage({ version: 0 }),
+        (tx) => setTransactionMessageFeePayer(payerAddress, tx),
+        (tx) => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, tx),
+        (tx) => appendTransactionMessageInstructions(instructions, tx)
+      );
+
+      const transaction = compileTransaction(transactionMessage);
+
+      const signature = await wallet.sendTransaction(transaction, {
+        rpc,
+        commitment: 'confirmed',
+        latestBlockhash
+      });
 
       walletStatus = 'Transaction submitted. Awaiting confirmation…';
 
-      await connection.confirmTransaction(
-        {
-          signature,
-          blockhash: latestBlockhash.blockhash,
-          lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
-        },
-        'confirmed'
-      );
+      await waitForTransactionConfirmation({
+        commitment: 'confirmed',
+        latestBlockhash,
+        rpc,
+        signature
+      });
 
       walletStatus = 'Transaction confirmed. Sending the receipt to the server…';
       updateSignatureForActive(signature);
@@ -689,11 +819,11 @@
   $: walletPublicKey = $wallet.publicKey ?? null;
   $: if (browser && $wallet.rpcEndpoint && $wallet.rpcEndpoint !== currentRpcEndpoint) {
     currentRpcEndpoint = $wallet.rpcEndpoint;
-    solanaConnection = new Connection($wallet.rpcEndpoint, 'confirmed');
+    rpc = createSolanaRpc($wallet.rpcEndpoint);
   }
   $: walletPaymentSupported = isSupportedWalletPayment(activePayment);
   $: canUseWallet = Boolean(
-    walletPaymentSupported && walletConnected && walletPublicKey && solanaConnection
+    walletPaymentSupported && walletConnected && walletPublicKey && rpc
   );
   $: if (activePaymentId !== lastActivePaymentId) {
     walletError = null;

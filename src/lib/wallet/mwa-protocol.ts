@@ -1,5 +1,4 @@
 import { browser } from '$app/environment';
-import type { Transaction, VersionedTransaction } from '@solana/web3.js';
 
 export const MWA_PROTOCOL_VERSION = '2.0';
 
