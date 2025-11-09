@@ -1002,10 +1002,10 @@ export class AuctionRepository {
          )
          LEFT JOIN message_requests mr ON mr.payment_request_id = pr.id
          LEFT JOIN groups g ON g.id = COALESCE(mr.group_id, pr.group_id)
-         WHERE mr.wallet_address = ? OR pr.last_payer_address = ? OR pp.payer_address = ?
-         ORDER BY COALESCE(pp.created_at, pr.updated_at) DESC`
+        WHERE mr.wallet_address = ? OR pr.last_payer_address = ? OR pp.payer_address = ?
+        ORDER BY COALESCE(pp.created_at, pr.updated_at) DESC`
       )
-      .bind(payerAddress, payerAddress)
+      .bind(payerAddress, payerAddress, payerAddress)
       .all<MessageJoinRow>();
 
     return (results ?? []).map(mapMessageJoinRow);
