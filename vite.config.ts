@@ -8,7 +8,7 @@ import type { Plugin } from 'vite';
 export default defineConfig({
   plugins: [sveltekit()],
   optimizeDeps: {
-    include: ['@solana/web3.js', 'buffer'],
+    include: ['@solana/kit', 'buffer'],
     esbuildOptions: {
       target: 'esnext',
       define: {

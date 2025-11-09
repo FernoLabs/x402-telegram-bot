@@ -1,20 +1,13 @@
 import { browser } from '$app/environment';
-import type { StandardWallet } from './types';
+import { getWallets } from '@wallet-standard/app';
+import type { Wallet } from '@wallet-standard/base';
+import { StandardConnect, StandardDisconnect, StandardEvents } from '@wallet-standard/features';
+import {
+  SolanaSignAndSendTransaction,
+  SolanaSignTransaction,
+} from '@solana/wallet-standard-features';
 
-type NavigatorWithWallets = Navigator & {
-  wallets?: {
-    get: () => StandardWallet[] | Promise<StandardWallet[]>;
-  };
-};
-
-type LegacySolana = {
-  isPhantom?: boolean;
-  isSolflare?: boolean;
-  connect?: (options?: { onlyIfTrusted?: boolean }) => Promise<{ publicKey: { toBase58: () => string } }>;
-  disconnect?: () => Promise<void>;
-  signTransaction?: (transaction: unknown) => Promise<unknown>;
-  signAllTransactions?: (transactions: unknown[]) => Promise<unknown[]>;
-};
+import type { StandardWallet, WalletWithStandardCapabilities } from './types';
 
 const FALLBACK_ICON =
   'data:image/svg+xml;base64,' +
@@ -22,63 +15,66 @@ const FALLBACK_ICON =
     `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none"><rect width="48" height="48" rx="12" fill="#111827"/><path d="M16 18h16v-2H16v2Zm0 7h16v-2H16v2Zm0 7h16v-2H16v2Z" fill="white"/></svg>`
   );
 
+function isSolanaWallet(wallet: Wallet): wallet is WalletWithStandardCapabilities {
+  const features = wallet.features;
+  if (!features) {
+    return false;
+  }
+
+  const supportsSign =
+    SolanaSignAndSendTransaction in features || SolanaSignTransaction in features;
+  const supportsConnect = StandardConnect in features;
+  const supportsDisconnect = StandardDisconnect in features;
+  const supportsEvents = StandardEvents in features;
+  const supportsSolanaChain = wallet.chains?.some((chain) => chain.startsWith('solana:'));
+
+  return Boolean(
+    supportsSign && supportsConnect && supportsDisconnect && supportsEvents && supportsSolanaChain
+  );
+}
+
+function adaptWallet(wallet: Wallet): StandardWallet | null {
+  if (!isSolanaWallet(wallet)) {
+    return null;
+  }
+
+  return {
+    name: wallet.name,
+    icon: wallet.icon ?? FALLBACK_ICON,
+    wallet
+  };
+}
+
 export async function getStandardWallets(): Promise<StandardWallet[]> {
   if (!browser) {
     return [];
   }
 
   const detected: StandardWallet[] = [];
-  const nav = navigator as NavigatorWithWallets;
-  const result = await nav.wallets?.get?.();
+  const registered = getWallets().get();
 
-  if (Array.isArray(result)) {
-    detected.push(
-      ...result.filter((wallet) => wallet.name && wallet.name.toLowerCase().includes('phantom'))
-    );
-  }
-
-  const legacy = (globalThis as unknown as { solana?: LegacySolana }).solana;
-  if (legacy?.isPhantom && legacy.connect && legacy.disconnect) {
-    const name = 'Phantom';
-    const wallet: StandardWallet = {
-      name,
-      icon: FALLBACK_ICON,
-      features: {
-        'standard:connect': {
-          async connect() {
-            const connect = legacy.connect!;
-            const response = await connect({ onlyIfTrusted: false });
-            return {
-              accounts: [
-                {
-                  publicKey: response.publicKey.toBase58(),
-                  label: name,
-                  chains: ['solana:mainnet']
-                }
-              ]
-            };
-          }
-        },
-        'standard:disconnect': {
-          async disconnect() {
-            await legacy.disconnect?.();
-          }
-        },
-        'solana:signTransaction': legacy.signTransaction
-          ? {
-              signTransaction: async (transaction: unknown) => legacy.signTransaction?.(transaction) ?? transaction
-            }
-          : undefined,
-        'solana:signTransactions': legacy.signAllTransactions
-          ? {
-              signTransactions: async (transactions: unknown[]) => legacy.signAllTransactions?.(transactions) ?? transactions
-            }
-          : undefined
-      }
-    } as unknown as StandardWallet;
-
-    detected.push(wallet);
+  for (const wallet of registered) {
+    const adapted = adaptWallet(wallet);
+    if (adapted) {
+      detected.push(adapted);
+    }
   }
 
   return detected;
+}
+
+export function onWalletRegistered(callback: (wallet: StandardWallet) => void): () => void {
+  if (!browser) {
+    return () => {};
+  }
+
+  const wallets = getWallets();
+  return wallets.on('register', (...newWallets) => {
+    for (const wallet of newWallets) {
+      const adapted = adaptWallet(wallet);
+      if (adapted) {
+        callback(adapted);
+      }
+    }
+  });
 }

@@ -1,51 +1,34 @@
-export interface StandardConnectFeature {
-  connect: () => Promise<{
-    accounts: Array<{
-      publicKey: string;
-      label?: string;
-      chains?: string[];
-    }>;
-  }>;
-}
+import type { Address } from '@solana/kit';
+import type { WalletAccount, WalletWithFeatures } from '@wallet-standard/base';
+import type { WalletWithSolanaFeatures } from '@solana/wallet-standard-features';
+import type {
+  StandardConnectFeature,
+  StandardDisconnectFeature,
+  StandardEventsFeature
+} from '@wallet-standard/features';
 
-export interface StandardDisconnectFeature {
-  disconnect: () => Promise<void>;
-}
+import type { MWASession } from './mwa-session.svelte';
 
-export interface SignAndSendTransactionFeature {
-  signAndSendTransaction: (transaction: unknown) => Promise<{ signature: string }>;
-}
-
-export interface SignTransactionsFeature {
-  signTransactions: (transactions: unknown[]) => Promise<unknown[]>;
-}
-
-export interface SignTransactionFeature {
-  signTransaction: (transaction: unknown) => Promise<unknown>;
-}
+export type WalletWithStandardCapabilities = WalletWithFeatures<
+  | WalletWithSolanaFeatures['features']
+  | StandardConnectFeature
+  | StandardDisconnectFeature
+  | StandardEventsFeature
+>;
 
 export interface StandardWallet {
   name: string;
   icon: string;
-  features: Record<string, unknown> & {
-    'standard:connect': StandardConnectFeature;
-    'standard:disconnect': StandardDisconnectFeature;
-    'standard:events'?: {
-      on: (event: string, listener: (...args: unknown[]) => void) => void;
-      off: (event: string, listener: (...args: unknown[]) => void) => void;
-    };
-    'solana:signAndSendTransaction'?: SignAndSendTransactionFeature;
-    'solana:signTransaction'?: SignTransactionFeature;
-    'solana:signTransactions'?: SignTransactionsFeature;
-  };
+  wallet: WalletWithStandardCapabilities;
 }
 
 export interface WalletStateSnapshot {
   rpcEndpoint: string;
   availableWallets: StandardWallet[];
   standardWallet: StandardWallet | null;
-  mwaSession: import('./mwa-session.svelte').MWASession | null;
-  publicKey: import('@solana/web3.js').PublicKey | null;
+  standardAccount: WalletAccount | null;
+  mwaSession: MWASession | null;
+  publicKey: Address | null;
   connected: boolean;
   connecting: boolean;
   useMWA: boolean;
