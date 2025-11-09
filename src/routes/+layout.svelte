@@ -17,7 +17,7 @@
   <link rel="icon" href={favicon} />
 </svelte:head>
 
-<WalletProvider rpcEndpoint="https://api.mainnet-beta.solana.com" />
+<WalletProvider rpcEndpoint="/api/solana/rpc" />
 
 <div class="app-shell">
   <header>
