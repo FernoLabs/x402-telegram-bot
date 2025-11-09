@@ -11,8 +11,8 @@
   <header>
     <h2 id="setup-title">Setup checklist</h2>
     <p>
-      Use this guide to connect your Telegram group to x402 payments. Once complete, anyone with the
-      link can pay in USDC on Solana and the bot will post to your members.
+      Use this guide to connect your Telegram group to paid posts. Once complete, anyone with the link
+      can pay in USDC on Solana and the bot will post to your members.
     </p>
   </header>
 
@@ -64,14 +64,16 @@
     <h3 id="help-title">Need a hand?</h3>
     <ul>
       <li>
-        <a href="https://www.x402.org/" target="_blank" rel="noreferrer">x402 documentation</a>
+        <a href="https://solana.com/developers/payments" target="_blank" rel="noreferrer"
+          >Solana payments overview</a
+        >
       </li>
       <li>
         <a href="https://core.telegram.org/bots" target="_blank" rel="noreferrer"
           >Telegram bot admin overview</a
         >
       </li>
-      <li><a href="mailto:hello@x402.org">Contact support</a></li>
+      <li>Need human help? Contact your operations team for direct support.</li>
     </ul>
   </section>
 </section>

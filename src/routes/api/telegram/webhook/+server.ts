@@ -155,7 +155,7 @@ async function handleGroupConfigCommand(
 
       await bot.sendMessage({
         chat_id: chatId,
-        text: `Registered this chat with x402 and set the payout wallet to:\n<code>${walletAddress}</code>\n\nCurrent price per message: ${defaultMinBid.toFixed(2)} USDC\nUse /setprice to change it.`,
+        text: `Registered this chat for paid posts and set the payout wallet to:\n<code>${walletAddress}</code>\n\nCurrent price per message: ${defaultMinBid.toFixed(2)} USDC\nUse /setprice to change it.`,
         parse_mode: 'HTML',
         reply_to_message_id: message.message_id
       });
@@ -165,7 +165,7 @@ async function handleGroupConfigCommand(
 
     await bot.sendMessage({
       chat_id: chatId,
-      text: 'This chat is not registered with x402 yet. Use /setwallet first to register it.',
+      text: 'This chat is not registered for paid posts yet. Use /setwallet first to register it.',
       reply_to_message_id: message.message_id
     });
     return true;

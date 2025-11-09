@@ -21,8 +21,8 @@
   <header>
     <h2 id="groups-title">Active groups</h2>
     <p>
-      These communities accept paid posts through x402. Listings reflect the live minimum bid, wallet,
-      and delivery stats pulled directly from the database.
+      These communities accept paid posts through the console. Listings reflect the live minimum bid,
+      wallet, and delivery stats pulled directly from the database.
     </p>
   </header>
 
@@ -35,7 +35,7 @@
 
   {#if groups.length > 0}
     <table>
-      <caption class="visually-hidden">Telegram groups enabled for x402 payments</caption>
+      <caption class="visually-hidden">Telegram groups enabled for paid posts</caption>
       <thead>
         <tr>
           <th scope="col">Group</th>
@@ -68,9 +68,9 @@
   <section class="note" aria-labelledby="note-title">
     <h3 id="note-title">How pricing works</h3>
     <p>
-      Senders pay the listed amount in USDC on the Solana network using x402. Payments confirm within
-      seconds and the bot posts the message with a receipt. Group owners can pause listings or adjust
-      pricing at any time from Telegram using the /setprice command.
+      Senders pay the listed amount in USDC on the Solana network using their own wallet. Payments
+      confirm within seconds and the bot posts the message with a receipt. Group owners can pause
+      listings or adjust pricing at any time from Telegram using the /setprice command.
     </p>
     <a class="action" href="/setup">Add your group</a>
   </section>

@@ -9,6 +9,7 @@ import {
   type Address,
   type Transaction
 } from '@solana/kit';
+import { PUBLIC_SOLANA_RPC_ENDPOINT } from '$lib/config';
 import type { createSolanaRpc } from '@solana/kit';
 import {
   SolanaSignAndSendTransaction,
@@ -79,7 +80,7 @@ function resolveChainFromEndpoint(endpoint: string): IdentifierString {
 }
 
 const defaultState: WalletState = {
-  rpcEndpoint: '/api/solana/rpc',
+  rpcEndpoint: PUBLIC_SOLANA_RPC_ENDPOINT,
   availableWallets: [],
   standardWallet: null,
   standardAccount: null,
@@ -362,6 +363,11 @@ function createWalletStore() {
         throw new Error('Unable to resolve wallet public key.');
       }
 
+      const rpcMaxRetries =
+        options.maxRetries === undefined ? undefined : BigInt(options.maxRetries);
+      const rpcMinContextSlot =
+        options.minContextSlot === undefined ? undefined : BigInt(options.minContextSlot);
+
       if (
         SolanaSignTransaction in wallet.features &&
         account.features.includes(SolanaSignTransaction)
@@ -372,15 +378,13 @@ function createWalletStore() {
         if (!feature) {
           throw new Error('Connected wallet does not expose solana:signTransaction.');
         }
-        const featureMaxRetries = options.maxRetries;
-        const featureMinContextSlot = options.minContextSlot;
         const [result] = await feature.signTransaction({
           account,
           chain,
           transaction: serializedBytes,
           options: {
             preflightCommitment: options.commitment,
-            minContextSlot: featureMinContextSlot
+            minContextSlot: options.minContextSlot
           }
         });
 
@@ -403,10 +407,6 @@ function createWalletStore() {
 
         const signature = bs58.encode(signatureBytes);
         const wireTransaction = getBase64EncodedWireTransaction(decodedTransaction);
-        const rpcMaxRetries =
-          options.maxRetries === undefined ? undefined : BigInt(options.maxRetries);
-        const rpcMinContextSlot =
-          options.minContextSlot === undefined ? undefined : BigInt(options.minContextSlot);
 
         await options.rpc
           .sendTransaction(wireTransaction, {
@@ -443,15 +443,13 @@ function createWalletStore() {
         if (!feature) {
           throw new Error('Connected wallet does not expose solana:signTransaction.');
         }
-        const featureMaxRetries = options.maxRetries;
-        const featureMinContextSlot = options.minContextSlot;
         const [result] = await feature.signTransaction({
           account,
           chain,
           transaction: serializedBytes,
           options: {
             preflightCommitment: options.commitment,
-            minContextSlot: featureMinContextSlot
+            minContextSlot: options.minContextSlot
           }
         });
 
