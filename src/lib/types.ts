@@ -65,6 +65,53 @@ export interface PaymentDetails {
   network: string | null;
 }
 
+export type PaymentRequestStatus = 'pending' | 'submitted' | 'confirmed' | 'expired' | 'cancelled';
+
+export interface PaymentRequestRecord {
+  id: number;
+  paymentId: string;
+  nonce: string;
+  groupId: number | null;
+  amount: number;
+  currency: string;
+  network: string;
+  recipient: string;
+  memo: string | null;
+  instructions: string | null;
+  resource: string | null;
+  description: string | null;
+  assetAddress: string | null;
+  assetType: string | null;
+  checkoutUrl: string | null;
+  facilitatorUrl: string | null;
+  status: PaymentRequestStatus;
+  expiresAt: string;
+  lastSignature: string | null;
+  lastPayerAddress: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type PendingPaymentStatus = 'pending' | 'submitted' | 'confirmed' | 'failed';
+
+export interface PendingPaymentRecord {
+  id: number;
+  requestId: number;
+  signature: string | null;
+  wireTransaction: string | null;
+  payerAddress: string | null;
+  status: PendingPaymentStatus;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PaymentHistoryEntry {
+  request: PaymentRequestRecord;
+  pending: PendingPaymentRecord | null;
+  verification?: (PaymentDetails & { slot: number; blockTime: number | null }) | null;
+}
+
 export interface TelegramChat {
   id: number | string;
   type?: 'private' | 'group' | 'supergroup' | 'channel';

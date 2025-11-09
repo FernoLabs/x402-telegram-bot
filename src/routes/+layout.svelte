@@ -9,7 +9,8 @@
     { href: '/', label: 'Overview' },
     { href: '/setup', label: 'Setup Guide' },
     { href: '/groups', label: 'Groups' },
-    { href: '/send', label: 'Send a Message' }
+    { href: '/send', label: 'Send a Message' },
+    { href: '/payments', label: 'Payments' }
   ];
 </script>
 

@@ -25,9 +25,8 @@
 	} from '@solana-program/token';
 	import { getTransferSolInstruction } from '@solana-program/system';
 	import { getAddMemoInstruction } from '@solana-program/memo';
-	import type { Auction, Group } from '$lib/types';
+        import type { Auction, Group, PaymentHistoryEntry } from '$lib/types';
 	import { wallet } from '$lib/wallet/wallet.svelte';
-	import { waitForTransactionConfirmation } from '$lib/wallet/transaction-confirmation';
 
 	interface PaymentAcceptOption {
 		scheme?: string;
@@ -131,6 +130,9 @@
         let autoRefreshActive = false;
 
         let transactionRecords: Record<string, string | null> = {};
+        let lastSyncedWallet: string | null = null;
+        let lastPaymentSync = 0;
+        let syncingPayments = false;
 
         function loadStoredPendingPayments(): StoredPendingPaymentRecord[] {
                 if (!browser) {
@@ -216,6 +218,172 @@
                         localStorage.removeItem(LOCAL_STORAGE_KEY);
                 } else {
                         localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(records));
+                }
+        }
+
+        function buildPendingPaymentFromRecord(record: PaymentHistoryEntry): PendingPaymentRequest {
+                const createdAt = Date.parse(record.request.createdAt);
+                const base: PendingPaymentRequest = {
+                        internalId: record.request.paymentId,
+                        createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
+                        amount: record.request.amount,
+                        currency: record.request.currency,
+                        currencyCode: record.request.currency,
+                        paymentAddress: record.request.recipient,
+                        paymentId: record.request.paymentId,
+                        recipient: record.request.recipient,
+                        network: record.request.network,
+                        networkId: record.request.network,
+                        memo: record.request.memo ?? undefined,
+                        instructions: record.request.instructions ?? undefined,
+                        description: record.request.description ?? undefined,
+                        assetAddress: record.request.assetAddress ?? undefined,
+                        assetType: record.request.assetType ?? undefined,
+                        expiresAt: record.request.expiresAt,
+                        resource: record.request.resource ?? undefined,
+                        maxAmountRequired: record.request.amount,
+                        nonce: record.request.nonce,
+                        checkout: record.request.checkoutUrl ?? undefined,
+                        facilitator: record.request.facilitatorUrl ?? undefined,
+                        accepts:
+                                record.request.instructions
+                                        ? undefined
+                                        : [
+                                                  {
+                                                          scheme: 'onchain-transfer',
+                                                          networkId: record.request.network,
+                                                          currencyCode: record.request.currency,
+                                                          amount: record.request.amount,
+                                                          recipient: record.request.recipient,
+                                                          memo: record.request.memo ?? undefined,
+                                                          assetAddress: record.request.assetAddress ?? undefined,
+                                                          assetType: record.request.assetType ?? undefined
+                                                  }
+                                          ]
+                };
+
+                return base;
+        }
+
+        function applyServerPayments(records: PaymentHistoryEntry[]): void {
+                if (!Array.isArray(records) || records.length === 0) {
+                        return;
+                }
+
+                let nextPending = [...pendingPayments];
+
+                for (const entry of records) {
+                        const paymentId = entry.request.paymentId;
+                        if (!paymentId) {
+                                continue;
+                        }
+
+                        const existingIndex = nextPending.findIndex(
+                                (candidate) => candidate.internalId === paymentId
+                        );
+
+                        const reconstructed = buildPendingPaymentFromRecord(entry);
+
+                        if (existingIndex >= 0) {
+                                const existing = nextPending[existingIndex];
+                                nextPending = nextPending.map((item, index) =>
+                                        index === existingIndex
+                                                ? {
+                                                          ...item,
+                                                          ...reconstructed,
+                                                          internalId: item.internalId,
+                                                          createdAt: item.createdAt
+                                                  }
+                                                : item
+                                );
+                        } else {
+                                nextPending = [...nextPending, reconstructed];
+                        }
+
+                        if (entry.pending?.wireTransaction) {
+                                transactionRecords = {
+                                        ...transactionRecords,
+                                        [paymentId]: entry.pending.wireTransaction
+                                };
+                        }
+
+                        if (entry.pending?.signature) {
+                                signatureInputs = {
+                                        ...signatureInputs,
+                                        [paymentId]: entry.pending.signature
+                                };
+                                signatureSubmitted = {
+                                        ...signatureSubmitted,
+                                        [paymentId]: entry.pending.status !== 'failed'
+                                };
+                        }
+
+                        if (entry.pending?.status === 'failed') {
+                                signatureErrors = {
+                                        ...signatureErrors,
+                                        [paymentId]:
+                                                entry.pending.error ??
+                                                'The backend could not submit this transaction. Try signing and sending again.'
+                                };
+                        } else if (
+                                entry.request.status === 'confirmed' ||
+                                entry.pending?.status === 'confirmed' ||
+                                Boolean(entry.verification)
+                        ) {
+                                const { [paymentId]: _removed, ...restErrors } = signatureErrors;
+                                signatureErrors = restErrors;
+                        }
+                }
+
+                pendingPayments = nextPending
+                        .slice()
+                        .sort((a, b) => a.createdAt - b.createdAt);
+                persistPendingPaymentState();
+        }
+
+        async function syncServerPayments(address: string, force = false): Promise<void> {
+                if (!address) {
+                        return;
+                }
+
+                const now = Date.now();
+                if (!force && lastSyncedWallet === address && now - lastPaymentSync < 5000) {
+                        return;
+                }
+
+                if (syncingPayments) {
+                        return;
+                }
+
+                syncingPayments = true;
+                lastSyncedWallet = address;
+                lastPaymentSync = now;
+
+                try {
+                        const response = await fetch(`/api/payments?wallet=${encodeURIComponent(address)}`);
+                        const payload = parseJson(await response.text());
+
+                        if (!response.ok) {
+                                const message =
+                                        payload &&
+                                        typeof payload === 'object' &&
+                                        'error' in payload &&
+                                        payload.error
+                                                ? String((payload as { error?: unknown }).error)
+                                                : 'Failed to sync payment history.';
+                                console.warn(message);
+                                return;
+                        }
+
+                        const records = Array.isArray((payload as { payments?: unknown }).payments)
+                                ? ((payload as { payments: PaymentHistoryEntry[] }).payments ?? [])
+                                : [];
+
+                        applyServerPayments(records);
+                } catch (error) {
+                        console.warn('Failed to synchronize payment history', error);
+                } finally {
+                        syncingPayments = false;
                 }
         }
 
@@ -963,39 +1131,135 @@
 				(tx) => appendTransactionMessageInstructions(instructions, tx)
 			);
 
-			const transaction = compileTransaction(transactionMessage);
+                        const transaction = compileTransaction(transactionMessage);
+                        const backendPaymentId = request.paymentId ?? null;
 
-                        const { signature, wireTransaction } = await wallet.sendTransaction(transaction, {
-                                rpc,
-                                commitment: 'confirmed',
-                                latestBlockhash
+                        if (!backendPaymentId) {
+                                throw new Error(
+                                        'The payment request is missing a payment identifier. Regenerate the payment instructions and try again.'
+                                );
+                        }
+
+                        const signed = await wallet.signTransaction(transaction);
+
+                        updateSignatureForActive(signed.signature, {
+                                transaction: signed.wireTransaction,
+                                markSubmitted: true
                         });
 
-			walletStatus = 'Transaction submitted. Awaiting confirmation…';
+                        walletStatus = 'Transaction signed. Submitting to the backend…';
 
-			await waitForTransactionConfirmation({
-				commitment: 'confirmed',
-				latestBlockhash,
-				rpc,
-				signature
-			});
-
-			walletStatus = 'Transaction confirmed. Sending the receipt to the server…';
-                        updateSignatureForActive(signature, {
-                                transaction: wireTransaction ?? null
+                        const submissionResponse = await fetch('/api/payments', {
+                                method: 'POST',
+                                headers: { 'content-type': 'application/json' },
+                                body: JSON.stringify({
+                                        paymentId: backendPaymentId,
+                                        wireTransaction: signed.wireTransaction,
+                                        payer: signed.payer
+                                })
                         });
-                        await requestPayment();
 
-			if (successAuction) {
-				walletStatus = 'Payment confirmed. Your message will be posted shortly.';
-			} else if (!error) {
-				walletStatus = 'Transaction confirmed. Awaiting server confirmation…';
-			}
-		} catch (walletException) {
-			console.error('Wallet payment failed', walletException);
-			walletError =
-				walletException instanceof Error
-					? walletException.message
+                        const submissionPayload = parseJson(await submissionResponse.text());
+
+                        if (!submissionResponse.ok) {
+                                const errorMessage =
+                                        submissionPayload &&
+                                        typeof submissionPayload === 'object' &&
+                                        'error' in submissionPayload
+                                                ? String(
+                                                          (submissionPayload as { error?: unknown }).error ??
+                                                                  'Failed to submit the transaction to the backend.'
+                                                  )
+                                                : 'Failed to submit the transaction to the backend.';
+                                walletError = errorMessage;
+                                walletStatus = null;
+
+                                const paymentDetails =
+                                        submissionPayload &&
+                                        typeof submissionPayload === 'object' &&
+                                        'payment' in submissionPayload
+                                                ? (submissionPayload as {
+                                                          payment?: {
+                                                                  pending?: {
+                                                                          signature?: string | null;
+                                                                          wireTransaction?: string | null;
+                                                                          status?: string | null;
+                                                                          error?: string | null;
+                                                                  };
+                                                          };
+                                                  }).payment ?? null
+                                                : null;
+
+                                if (paymentDetails?.pending?.signature) {
+                                        updateSignatureForActive(paymentDetails.pending.signature, {
+                                                transaction:
+                                                        paymentDetails.pending.wireTransaction ?? signed.wireTransaction,
+                                                markSubmitted: paymentDetails.pending.status !== 'failed'
+                                        });
+
+                                        if (
+                                                paymentDetails.pending.status === 'failed' &&
+                                                paymentDetails.pending.error
+                                        ) {
+                                                signatureErrors = {
+                                                        ...signatureErrors,
+                                                        [request.internalId]: paymentDetails.pending.error
+                                                };
+                                        }
+                                }
+
+                                if (state.publicKey) {
+                                        await syncServerPayments(state.publicKey, true);
+                                }
+
+                                return;
+                        }
+
+                        const paymentPayload =
+                                submissionPayload && typeof submissionPayload === 'object'
+                                        ? (submissionPayload as {
+                                                  payment?: {
+                                                          pending?: {
+                                                                  signature?: string | null;
+                                                                  wireTransaction?: string | null;
+                                                                  status?: string | null;
+                                                                  error?: string | null;
+                                                          };
+                                                          verification?: unknown;
+                                                  };
+                                          }).payment ?? null
+                                        : null;
+
+                        const resolvedSignature =
+                                paymentPayload?.pending?.signature ?? signed.signature;
+                        const resolvedTransaction =
+                                paymentPayload?.pending?.wireTransaction ?? signed.wireTransaction;
+
+                        updateSignatureForActive(resolvedSignature, {
+                                transaction: resolvedTransaction,
+                                markSubmitted: true
+                        });
+
+                        if (paymentPayload?.pending?.status === 'failed') {
+                                walletError =
+                                        paymentPayload.pending.error ??
+                                        'The backend reported a failure while broadcasting the transaction.';
+                                walletStatus = null;
+                        } else if (paymentPayload?.verification) {
+                                walletStatus =
+                                        'Payment confirmed on-chain. Resubmit the form to post your message.';
+                        } else {
+                                walletStatus = 'Transaction submitted to the backend. Awaiting confirmation…';
+                        }
+
+                        if (state.publicKey) {
+                                await syncServerPayments(state.publicKey, true);
+                        }
+                } catch (walletException) {
+                        console.error('Wallet payment failed', walletException);
+                        walletError =
+                                walletException instanceof Error
+                                        ? walletException.message
 					: 'Failed to process the wallet payment. Please try again.';
 		} finally {
 			walletProcessing = false;
@@ -1058,6 +1322,9 @@
         }
         $: walletConnected = $wallet.connected;
         $: walletPublicKey = $wallet.publicKey ?? null;
+        $: if (walletConnected && walletPublicKey) {
+                void syncServerPayments(walletPublicKey);
+        }
         $: if (browser && $wallet.rpcEndpoint && $wallet.rpcEndpoint !== currentRpcEndpoint) {
                 currentRpcEndpoint = $wallet.rpcEndpoint;
                 console.log('Initializing Solana RPC connection to', currentRpcEndpoint);
