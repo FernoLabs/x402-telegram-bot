@@ -4,16 +4,10 @@
   import { wallet } from '$lib/wallet/wallet.svelte';
 
   interface Props {
-    appName?: string;
-    appUrl?: string;
     class?: string;
   }
 
-  let {
-    appName = 'x402 Telegram Console',
-    appUrl = typeof window !== 'undefined' ? window.location.origin : '',
-    class: className = ''
-  }: Props = $props();
+  let { class: className = '' }: Props = $props();
 
   let showModal = $state(false);
   let menuOpen = $state(false);
@@ -78,7 +72,7 @@
     </div>
   {/if}
 
-  <WalletModal bind:show={showModal} {appName} {appUrl} on:closed={() => (menuOpen = false)} />
+  <WalletModal bind:show={showModal} on:closed={() => (menuOpen = false)} />
 </div>
 
 <style>
