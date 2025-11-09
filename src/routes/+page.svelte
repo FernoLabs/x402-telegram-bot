@@ -3,7 +3,7 @@
     <div>
       <h2 id="page-title">Set paid Telegram posts in minutes</h2>
       <p>
-        Invite the x402 bot to your group, choose a price per message, and accept USDC on the
+        Invite the payments bot to your group, choose a price per message, and accept USDC on the
         Solana network. The console keeps setup, pricing, and delivery in one simple flow.
       </p>
       <div class="hero-actions" role="group" aria-label="Primary actions">
@@ -26,7 +26,7 @@
     <ol>
       <li>
         <h4>1. Invite the bot</h4>
-        <p>Add the x402 Telegram bot and grant it permission to post and pin messages.</p>
+        <p>Add the payments Telegram bot and grant it permission to post and pin messages.</p>
       </li>
       <li>
         <h4>2. Pick a price</h4>
@@ -37,17 +37,17 @@
       </li>
       <li>
         <h4>3. Share the link</h4>
-        <p>Send the payment link to partners or agents. They fund with x402 and the bot posts.</p>
+        <p>Send the payment link to partners or agents. They fund straight from their Solana wallet and the bot posts.</p>
       </li>
     </ol>
   </section>
 
   <section class="details" aria-labelledby="details-title">
     <div>
-      <h3 id="details-title">Built on x402 micropayments</h3>
+      <h3 id="details-title">Built for Solana micropayments</h3>
       <p>
-        x402 handles the USDC transfer on Solana and confirms the payment before anything reaches
-        your members. Every message is logged so you can audit payouts later.
+        The console guides the USDC transfer on Solana and confirms the payment before anything
+        reaches your members. Every message is logged so you can audit payouts later.
       </p>
     </div>
     <div class="grid">

@@ -71,16 +71,16 @@
 </script>
 
 <svelte:head>
-  <title>Complete your x402 payment</title>
+  <title>Complete your payment</title>
   <meta
     name="description"
-    content={`Send ${formatAmount(data.payment.amount, data.payment.currency)} to ${data.payment.recipient} on ${data.payment.network} using x402.`}
+    content={`Send ${formatAmount(data.payment.amount, data.payment.currency)} to ${data.payment.recipient} on ${data.payment.network}.`}
   />
 </svelte:head>
 
 <article class="payment-page">
   <header class="intro">
-    <h2>Complete your x402 payment</h2>
+    <h2>Complete your payment</h2>
     <p>
       Send {formatAmount(data.payment.amount, data.payment.currency)} on {data.payment.network} to
       <code>{data.payment.recipient}</code>.
@@ -90,10 +90,10 @@
     {/if}
     <div class="checkout">
       <a class="checkout-button" href={checkoutUrl} rel="noreferrer" target="_blank"
-        >Open x402 checkout</a
+        >Open checkout</a
       >
       <p class="checkout-hint">
-        This opens the hosted x402 facilitator so you can approve the USDC transfer from your Solana wallet.
+        This opens the hosted checkout so you can approve the USDC transfer from your Solana wallet.
       </p>
     </div>
   </header>
@@ -154,13 +154,12 @@
     <h3>How to pay</h3>
     <ol>
       <li>
-        Click <strong>Open x402 checkout</strong> to launch the hosted facilitator. It will load the payment
+        Click <strong>Open checkout</strong> to launch the hosted facilitator. It will load the payment
         payload for this request.
       </li>
       <li>
         Approve the USDC transfer from your Solana wallet (e.g. Phantom). The facilitator will broadcast the
-        transaction and share the encoded payment payload with this app, following the x402 flow described in
-        the QuickNode guide.
+        transaction and share the encoded payment payload with this app so the bot can verify it.
       </li>
       <li>
         Once the transaction confirms, return to the previous tab and submit the payment payload so the bot
@@ -168,8 +167,8 @@
       </li>
     </ol>
     <p class="footnote">
-      Once the payment confirms on-chain, the facilitator reports success via x402 and this bot can publish
-      your announcement automatically.
+      Once the payment confirms on-chain, the facilitator reports success and this bot can publish your
+      announcement automatically.
     </p>
   </section>
 </article>

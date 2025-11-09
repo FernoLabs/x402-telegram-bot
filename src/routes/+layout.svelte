@@ -18,11 +18,11 @@
   <link rel="icon" href={favicon} />
 </svelte:head>
 
-<WalletProvider rpcEndpoint="/api/solana/rpc" />
+<WalletProvider />
 
 <div class="app-shell">
   <header>
-    <h1>x402 Telegram Console</h1>
+    <h1>Telegram Payments Console</h1>
     <div class="header-actions">
       <nav aria-label="Main navigation">
         <ul>

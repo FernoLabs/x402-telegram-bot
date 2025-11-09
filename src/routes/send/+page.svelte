@@ -1,21 +1,21 @@
 <script lang="ts">
         import { browser } from '$app/environment';
         import { onDestroy } from 'svelte';
-	import {
-		address,
-		appendTransactionMessageInstructions,
-		compileTransaction,
-		createNoopSigner,
-		createSolanaRpc,
-		createTransactionMessage,
-		lamports,
-		pipe,
-		setTransactionMessageFeePayer,
-		setTransactionMessageLifetimeUsingBlockhash,
-		type Address,
-		type Instruction,
-		type Transaction
-	} from '@solana/kit';
+        import {
+                address,
+                appendTransactionMessageInstructions,
+                compileTransaction,
+                createNoopSigner,
+                createSolanaRpc,
+                createTransactionMessage,
+                lamports,
+                pipe,
+                setTransactionMessageFeePayer,
+                setTransactionMessageLifetimeUsingBlockhash,
+                type Address,
+                type Instruction,
+                type Transaction
+        } from '@solana/kit';
 	import {
 		findAssociatedTokenPda,
 		fetchMint,
@@ -28,55 +28,15 @@
         import type { Auction, Group, PaymentHistoryEntry } from '$lib/types';
 	import { wallet } from '$lib/wallet/wallet.svelte';
 
-	interface PaymentAcceptOption {
-		scheme?: string;
-		networkId?: string;
-		currencyCode?: string;
-		amount?: number;
-		recipient?: string;
-		memo?: string;
-		assetAddress?: string;
-		assetType?: string;
-	}
-
-	interface PaymentRequestData {
-		amount?: number;
-		maxAmountRequired?: number;
-		currency?: string;
-		currencyCode?: string;
-		recipient?: string;
-		paymentAddress?: string;
-		network?: string;
-		networkId?: string;
-		instructions?: string;
-		description?: string;
-		resource?: string;
-		expiresAt?: string;
-		memo?: string;
-		groupName?: string;
-		accepts?: PaymentAcceptOption[];
-		assetAddress?: string;
-		assetType?: string;
-		paymentId?: string;
-		nonce?: string;
-		checkout?: string;
-		facilitator?: string;
-	}
-
-        interface PendingPaymentRequest extends PaymentRequestData {
-                internalId: string;
-                createdAt: number;
-        }
-
-        interface StoredPendingPaymentRecord {
-                request: PendingPaymentRequest;
-                signature?: string;
-                transaction?: string | null;
-                submitted?: boolean;
-        }
-
-        const LOCAL_STORAGE_KEY = 'x402:pending-payments';
-        const DEFAULT_FACILITATOR_URL = 'https://facilitator.payai.network/pay';
+        import {
+                buildPendingPaymentFromRecord,
+                DEFAULT_FACILITATOR_URL,
+                loadStoredPendingPayments,
+                persistPendingPayments,
+                type PaymentRequestData,
+                type PendingPaymentRequest,
+                type StoredPendingPaymentRecord
+        } from '$lib/payments/storage';
 
 	export let data: {
 		groups: Group[];
@@ -134,76 +94,7 @@
         let lastPaymentSync = 0;
         let syncingPayments = false;
 
-        function loadStoredPendingPayments(): StoredPendingPaymentRecord[] {
-                if (!browser) {
-                        return [];
-                }
-
-                const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
-                if (!raw) {
-                        return [];
-                }
-
-                try {
-                        const parsed = JSON.parse(raw) as unknown;
-                        if (!Array.isArray(parsed)) {
-                                return [];
-                        }
-
-                        const normalized = parsed
-                                .map((entry) => {
-                                        if (!entry || typeof entry !== 'object') {
-                                                return null;
-                                        }
-
-                                        const record = entry as Partial<StoredPendingPaymentRecord> & {
-                                                request?: Partial<PendingPaymentRequest>;
-                                        };
-                                        const request = record.request;
-
-                                        if (!request || typeof request !== 'object') {
-                                                return null;
-                                        }
-
-                                        const candidate = request as PendingPaymentRequest;
-                                        if (
-                                                typeof candidate.internalId !== 'string' ||
-                                                typeof candidate.createdAt !== 'number'
-                                        ) {
-                                                return null;
-                                        }
-
-                                        const restored: StoredPendingPaymentRecord = {
-                                                request: candidate,
-                                                submitted: Boolean(record.submitted)
-                                        };
-
-                                        if (typeof record.signature === 'string') {
-                                                restored.signature = record.signature;
-                                        }
-
-                                        if (typeof record.transaction === 'string') {
-                                                restored.transaction = record.transaction;
-                                        } else if (record.transaction === null) {
-                                                restored.transaction = null;
-                                        }
-
-                                        return restored;
-                                })
-                                .filter((entry): entry is StoredPendingPaymentRecord => entry !== null);
-
-                        return normalized;
-                } catch (error) {
-                        console.warn('Failed to restore pending payments from storage', error);
-                        return [];
-                }
-        }
-
         function persistPendingPaymentState(): void {
-                if (!browser) {
-                        return;
-                }
-
                 const records: StoredPendingPaymentRecord[] = pendingPayments.map((payment) => ({
                         request: payment,
                         signature: signatureInputs[payment.internalId]?.trim() || undefined,
@@ -214,55 +105,7 @@
                         submitted: signatureSubmitted[payment.internalId] ?? false
                 }));
 
-                if (records.length === 0) {
-                        localStorage.removeItem(LOCAL_STORAGE_KEY);
-                } else {
-                        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(records));
-                }
-        }
-
-        function buildPendingPaymentFromRecord(record: PaymentHistoryEntry): PendingPaymentRequest {
-                const createdAt = Date.parse(record.request.createdAt);
-                const base: PendingPaymentRequest = {
-                        internalId: record.request.paymentId,
-                        createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
-                        amount: record.request.amount,
-                        currency: record.request.currency,
-                        currencyCode: record.request.currency,
-                        paymentAddress: record.request.recipient,
-                        paymentId: record.request.paymentId,
-                        recipient: record.request.recipient,
-                        network: record.request.network,
-                        networkId: record.request.network,
-                        memo: record.request.memo ?? undefined,
-                        instructions: record.request.instructions ?? undefined,
-                        description: record.request.description ?? undefined,
-                        assetAddress: record.request.assetAddress ?? undefined,
-                        assetType: record.request.assetType ?? undefined,
-                        expiresAt: record.request.expiresAt,
-                        resource: record.request.resource ?? undefined,
-                        maxAmountRequired: record.request.amount,
-                        nonce: record.request.nonce,
-                        checkout: record.request.checkoutUrl ?? undefined,
-                        facilitator: record.request.facilitatorUrl ?? undefined,
-                        accepts:
-                                record.request.instructions
-                                        ? undefined
-                                        : [
-                                                  {
-                                                          scheme: 'onchain-transfer',
-                                                          networkId: record.request.network,
-                                                          currencyCode: record.request.currency,
-                                                          amount: record.request.amount,
-                                                          recipient: record.request.recipient,
-                                                          memo: record.request.memo ?? undefined,
-                                                          assetAddress: record.request.assetAddress ?? undefined,
-                                                          assetType: record.request.assetType ?? undefined
-                                                  }
-                                          ]
-                };
-
-                return base;
+                persistPendingPayments(records);
         }
 
         function applyServerPayments(records: PaymentHistoryEntry[]): void {
@@ -1555,165 +1398,15 @@
 	{/if}
 
 	{#if pendingPayments.length > 0}
-		<section class="payment-center" aria-live="polite">
-			<aside class="payment-list">
-				<h3>Pending payment requests</h3>
-				<ul>
-					{#each pendingPayments as request (request.internalId)}
-						<li class:selected={request.internalId === activePaymentId}>
-							<button type="button" on:click={() => (activePaymentId = request.internalId)}>
-								<span class="amount-label">
-									{#if resolveAmount(request) !== null}
-										{formatAmountForCurrency(
-											resolveAmount(request) ?? 0,
-											resolveCurrency(request) ?? 'USDC'
-										)}
-										{resolveCurrency(request) ? ` ${resolveCurrency(request)?.toUpperCase()}` : ''}
-									{:else}
-										Amount pending
-									{/if}
-								</span>
-								{#if request.expiresAt}
-									<span class="expires-label">
-										Expires {formatExpiration(request.expiresAt) ?? request.expiresAt}
-									</span>
-								{/if}
-                                                                {#if signatureSubmitted[request.internalId]}
-                                                                        <span class="signature-flag">Signature saved</span>
-                                                                {/if}
-							</button>
-						</li>
-					{/each}
-				</ul>
-			</aside>
-
-			<div class="payment-details">
-				{#if activePayment}
-					<div class="hosted-panel">
-						<h4>Hosted checkout</h4>
-						{#if hostedCheckoutLink}
-							<p>
-								Open the hosted facilitator in a new tab to complete this payment without connecting
-								a browser wallet here.
-							</p>
-							<a class="hosted-checkout" href={hostedCheckoutLink} target="_blank" rel="noreferrer">
-								Open hosted checkout
-							</a>
-							<p class="hosted-hint">
-								After confirming the transfer, copy the transaction signature back into this page
-								before resubmitting the form.
-							</p>
-						{:else}
-							<p>
-								Use the instructions below to settle the transfer from your preferred Solana wallet,
-								then paste the signature here once it finalizes.
-							</p>
-						{/if}
-					</div>
-
-					<div class="payment-instructions">
-						<h4>Payment details</h4>
-						<p>
-							{#if paymentAmountDisplay}
-								Send {paymentAmountDisplay} {paymentCurrencyLabel}
-							{:else}
-								Send the required amount of {paymentCurrencyLabel}
-							{/if}
-							on {paymentNetworkDisplay}
-							{#if paymentRecipient}
-								to <code>{paymentRecipient}</code>
-							{:else}
-								to the configured payment address
-							{/if}
-							. After the transfer settles, submit the transaction signature below.
-						</p>
-						{#if paymentMemo}
-							<p>
-								Include memo <code>{paymentMemo}</code> with the transfer.
-							</p>
-						{/if}
-						{#if paymentInstructions}
-							<p>{paymentInstructions}</p>
-						{/if}
-
-						{#if walletPaymentSupported}
-							<div class="wallet-settlement" aria-live="polite">
-								<button
-									type="button"
-									class="wallet-pay-button"
-									on:click={payWithWallet}
-									disabled={walletProcessing || loading || !canUseWallet}
-								>
-									{#if walletProcessing}
-										Paying with wallet…
-									{:else if !walletConnected}
-										Connect a wallet to pay
-									{:else}
-										Pay with connected wallet
-									{/if}
-								</button>
-								{#if !walletConnected}
-									<p class="wallet-hint">Use the wallet button in the header to connect.</p>
-								{/if}
-								{#if walletError}
-									<p class="wallet-error">{walletError}</p>
-								{/if}
-								{#if walletStatus}
-									<p class="wallet-status">{walletStatus}</p>
-								{/if}
-							</div>
-						{/if}
-
-                                                <label class="signature-field">
-                                                        <span>Transaction signature</span>
-                                                        <input
-                                                                type="text"
-                                                                value={currentSignatureValue}
-								placeholder="Paste or generate the Solana transaction signature"
-								on:input={(event) =>
-									updateSignatureForActive((event.target as HTMLInputElement).value)}
-								disabled={loading}
-                                                        />
-                                                        <small>Resubmit this form after the transaction is confirmed on Solana.</small>
-                                                        {#if currentSignatureError}
-                                                                <span class="payload-error">{currentSignatureError}</span>
-                                                        {/if}
-                                                </label>
-                                                {#if activeSignatureSubmitted}
-                                                        <div class="signature-actions" aria-live="polite">
-                                                                <button
-                                                                        type="button"
-                                                                        class="refresh-button"
-                                                                        on:click={requestPayment}
-                                                                        disabled={loading}
-                                                                >
-                                                                        {#if loading}
-                                                                                Checking payment status…
-                                                                        {:else}
-                                                                                Refresh payment status
-                                                                        {/if}
-                                                                </button>
-                                                                <p class="refresh-hint">
-                                                                        {#if autoRefreshActive}
-                                                                                We'll keep retrying automatically every second.
-                                                                        {:else}
-                                                                                Click refresh to check for confirmation again.
-                                                                        {/if}
-                                                                </p>
-                                                        </div>
-                                                {/if}
-                                                {#if paymentExpirationDisplay}
-                                                        <p class="footnote">Payment request expires {paymentExpirationDisplay}.</p>
-                                                {/if}
-                                        </div>
-                                {:else}
-					<p class="payment-placeholder">
-						Select a payment request to view the settlement instructions.
-					</p>
-				{/if}
-			</div>
-		</section>
-	{/if}
+                <section class="payment-notice" aria-live="polite">
+                        <h3>Pending payment requests</h3>
+                        <p>
+                                Pending payment management has moved to the
+                                <a href="/payments">Payments</a> page. Open it to review instructions, submit
+                                signatures, or settle with a connected wallet.
+                        </p>
+                </section>
+        {/if}
 
 	{#if successAuction && selectedGroup}
 		<div class="status success" aria-live="polite" role="status">
@@ -1849,229 +1542,51 @@
 		color: #14532d;
 	}
 
-	.payment-center {
-		background: white;
-		border: 1px solid #e2e8f0;
-		border-radius: 16px;
-		padding: clamp(1.5rem, 3vw, 2.25rem);
-		display: grid;
-		gap: clamp(1.25rem, 2.5vw, 2rem);
-	}
-
-	@media (min-width: 960px) {
-		.payment-center {
-			grid-template-columns: minmax(240px, 1fr) minmax(0, 2fr);
-		}
-	}
-
-	.payment-list h3 {
-		margin: 0 0 0.75rem;
-	}
-
-	.payment-list ul {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: grid;
-		gap: 0.5rem;
-	}
-
-	.payment-list li button {
-		width: 100%;
-		text-align: left;
-		background: #f8fafc;
-		border: 1px solid #dbeafe;
-		color: #0f172a;
-		border-radius: 12px;
-		padding: 0.75rem;
-		display: grid;
-		gap: 0.25rem;
-	}
-
-	.payment-list li.selected button {
-		border-color: #111827;
-		background: rgba(17, 24, 39, 0.08);
-	}
-
-	.amount-label {
-		font-weight: 600;
-		color: #0f172a;
-	}
-
-	.expires-label {
-		font-size: 0.85rem;
-		color: #475569;
-	}
-
-	.signature-flag {
-		font-size: 0.75rem;
-		font-weight: 600;
-		color: #047857;
-	}
-
-	.payment-details {
-		display: grid;
-		gap: clamp(1rem, 2vw, 1.5rem);
-	}
-
-	.hosted-panel,
-	.payment-instructions {
-		border: 1px solid #dbeafe;
-		border-radius: 16px;
-		padding: clamp(1rem, 2vw, 1.5rem);
-		background: #f8fbff;
-		display: grid;
-		gap: 0.75rem;
-	}
-
-	.hosted-checkout {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		padding: 0.55rem 1.25rem;
-		border-radius: 10px;
-		background: #2563eb;
-		color: #fff;
-		font-weight: 600;
-		text-decoration: none;
-	}
-
-	.hosted-checkout:hover {
-		background: #1d4ed8;
-	}
-
-	.hosted-hint {
-		margin: 0.25rem 0 0;
-		font-size: 0.9rem;
-		color: #475569;
-	}
-
-	.signature-field {
-		display: grid;
-		gap: 0.45rem;
-		margin-top: 0.5rem;
-	}
-
-        .signature-field small {
-                color: #0f172a;
-                opacity: 0.8;
-                font-size: 0.85rem;
-        }
-
-        .signature-actions {
+        .payment-notice {
+                margin-top: 1.5rem;
+                border: 1px solid #cbd5f5;
+                border-radius: 16px;
+                background: #f8fafc;
+                padding: clamp(1.2rem, 2vw, 1.75rem);
                 display: grid;
-                gap: 0.35rem;
-                margin-top: 0.75rem;
+                gap: 0.5rem;
         }
 
-        .refresh-button {
-                background: #2563eb;
-                color: #fff;
+        .payment-notice a {
+                color: #2563eb;
+                font-weight: 600;
         }
 
-        .refresh-button:hover,
-        .refresh-button:focus-visible {
-                background: #1d4ed8;
-        }
-
-        .refresh-button[disabled] {
-                opacity: 0.75;
-        }
-
-        .refresh-hint {
-                margin: 0;
-                font-size: 0.9rem;
+        .field-note {
                 color: #475569;
+                font-size: 0.9rem;
         }
 
-	.wallet-settlement {
-		display: grid;
-		gap: 0.5rem;
-		margin: 0.5rem 0 0;
-	}
+        .help {
+                background: white;
+                border: 1px solid #e2e8f0;
+                border-radius: 16px;
+                padding: clamp(1.5rem, 3vw, 2.25rem);
+                display: grid;
+                gap: 0.75rem;
+        }
 
-	.wallet-pay-button {
-		justify-self: start;
-		padding: 0.55rem 1.25rem;
-		border: none;
-		border-radius: 10px;
-		background: #2563eb;
-		color: #fff;
-		font-weight: 600;
-		cursor: pointer;
-	}
+        .help ol {
+                margin: 0;
+                padding-left: 1.2rem;
+                color: #475569;
+                line-height: 1.6;
+        }
 
-	.wallet-pay-button[disabled] {
-		background: #94a3b8;
-		cursor: not-allowed;
-	}
+        a {
+                color: #0f172a;
+        }
 
-	.wallet-hint {
-		margin: 0;
-		font-size: 0.9rem;
-		color: #475569;
-	}
+        select[disabled],
+        textarea[disabled],
+        input[disabled] {
+                background: #e2e8f0;
+                cursor: not-allowed;
+        }
 
-	.wallet-error {
-		margin: 0;
-		font-size: 0.9rem;
-		font-weight: 600;
-		color: #b91c1c;
-	}
-
-	.wallet-status {
-		margin: 0;
-		font-size: 0.9rem;
-		font-weight: 600;
-		color: #047857;
-	}
-
-	.payload-error {
-		color: #b91c1c;
-		font-size: 0.85rem;
-		font-weight: 600;
-	}
-
-	.footnote {
-		margin: 0;
-		font-size: 0.95rem;
-		color: inherit;
-		opacity: 0.85;
-	}
-
-	.field-note {
-		color: #475569;
-		font-size: 0.9rem;
-	}
-
-	.payment-placeholder {
-		color: #475569;
-	}
-
-	.help {
-		background: white;
-		border: 1px solid #e2e8f0;
-		border-radius: 16px;
-		padding: clamp(1.5rem, 3vw, 2.25rem);
-		display: grid;
-		gap: 0.75rem;
-	}
-
-	.help ol {
-		margin: 0;
-		padding-left: 1.2rem;
-		color: #475569;
-		line-height: 1.6;
-	}
-
-	a {
-		color: #0f172a;
-	}
-
-	select[disabled],
-	textarea[disabled],
-	input[disabled] {
-		background: #e2e8f0;
-		cursor: not-allowed;
-	}
 </style>
