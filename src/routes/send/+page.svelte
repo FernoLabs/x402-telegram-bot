@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { onMount } from 'svelte';
   import type { Group } from '$lib/types';
   import { wallet } from '$lib/wallet/wallet.svelte';
 
@@ -29,9 +30,12 @@
   $: defaultGroupId = resolveDefaultGroupId();
 
   let selectedGroupId = '';
+  onMount(() => {
+    selectedGroupId = resolveDefaultGroupId();
+  });
   $: {
     const hasSelection = activeGroups.some((group) => String(group.id) === selectedGroupId);
-    if (!hasSelection) {
+    if (!hasSelection && defaultGroupId) {
       selectedGroupId = defaultGroupId;
     }
   }
