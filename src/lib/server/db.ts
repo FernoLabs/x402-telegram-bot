@@ -4,7 +4,9 @@ import type {
   CreateAuctionInput,
   CreateGroupInput,
   Group,
-  PaymentHistoryEntry,
+  MessagePaymentHistoryEntry,
+  MessageRequest,
+  MessageRequestStatus,
   PaymentRequestRecord,
   PaymentRequestStatus,
   PendingPaymentRecord,
@@ -119,6 +121,46 @@ interface PaymentJoinRow {
   pending_updated_at: string | null;
 }
 
+interface MessageRequestRow {
+  id: number;
+  payment_request_id: number;
+  group_id: number;
+  wallet_address: string;
+  sender_name: string | null;
+  message: string;
+  status: string;
+  last_error: string | null;
+  telegram_message_id: number | null;
+  telegram_chat_id: string | null;
+  sent_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface MessageJoinRow extends PaymentJoinRow {
+  message_id: number | null;
+  message_group_id: number | null;
+  message_status: string | null;
+  message_sender_name: string | null;
+  message_wallet_address: string | null;
+  message_text: string | null;
+  message_last_error: string | null;
+  message_telegram_message_id: number | null;
+  message_telegram_chat_id: string | null;
+  message_sent_at: string | null;
+  message_created_at: string | null;
+  message_updated_at: string | null;
+  group_name: string | null;
+  group_category: string | null;
+  group_telegram_id: string | null;
+  group_min_bid: number | null;
+  group_owner_address: string | null;
+  group_active: number | null;
+  group_total_earned: number | null;
+  group_message_count: number | null;
+  group_created_at: string | null;
+}
+
 interface CreatePaymentRequestInput {
   paymentId?: string;
   nonce?: string;
@@ -159,6 +201,28 @@ interface UpdatePendingPaymentInput {
   signature?: string | null;
   wireTransaction?: string | null;
   payerAddress?: string | null;
+}
+
+interface CreateMessagePaymentInput {
+  groupId: number;
+  walletAddress: string;
+  senderName?: string | null;
+  message: string;
+  amount: number;
+  currency: string;
+  network: string;
+  recipient: string;
+  expiresInSeconds?: number;
+  assetAddress?: string | null;
+  assetType?: string | null;
+}
+
+interface UpdateMessageRequestInput {
+  status?: MessageRequestStatus;
+  lastError?: string | null;
+  telegramMessageId?: number | null;
+  telegramChatId?: string | null;
+  sentAt?: string | null;
 }
 
 export class AuctionRepository {
@@ -541,6 +605,71 @@ export class AuctionRepository {
     return mapPaymentRequestRow(row);
   }
 
+  async createMessagePaymentRequest(
+    input: CreateMessagePaymentInput
+  ): Promise<{ payment: PaymentRequestRecord; message: MessageRequest }> {
+    const payment = await this.createPaymentRequest({
+      groupId: input.groupId,
+      amount: input.amount,
+      currency: input.currency,
+      network: input.network,
+      recipient: input.recipient,
+      memo: input.message,
+      description: `Message payment for group ${input.groupId}`,
+      expiresInSeconds: input.expiresInSeconds,
+      assetAddress: input.assetAddress ?? null,
+      assetType: input.assetType ?? null
+    });
+
+    await this.db
+      .prepare(
+        `INSERT INTO message_requests (
+           payment_request_id,
+           group_id,
+           wallet_address,
+           sender_name,
+           message,
+           status
+         ) VALUES (?, ?, ?, ?, ?, 'awaiting_payment')`
+      )
+      .bind(
+        payment.id,
+        input.groupId,
+        input.walletAddress,
+        input.senderName ?? null,
+        input.message
+      )
+      .run();
+
+    const row = await this.db
+      .prepare(
+        `SELECT
+           id,
+           payment_request_id,
+           group_id,
+           wallet_address,
+           sender_name,
+           message,
+           status,
+           last_error,
+           telegram_message_id,
+           telegram_chat_id,
+           sent_at,
+           created_at,
+           updated_at
+         FROM message_requests
+         WHERE payment_request_id = ?`
+      )
+      .bind(payment.id)
+      .first<MessageRequestRow>();
+
+    if (!row) {
+      throw new Error('Failed to fetch message request after insert');
+    }
+
+    return { payment, message: mapMessageRequestRow(row) };
+  }
+
   async getPaymentRequestById(id: number): Promise<PaymentRequestRecord | null> {
     const row = await this.db
       .prepare(
@@ -717,7 +846,98 @@ export class AuctionRepository {
     return row ? mapPendingPaymentRow(row) : null;
   }
 
-  async listPaymentsForWallet(payerAddress: string): Promise<PaymentHistoryEntry[]> {
+  async getMessageRequestByPaymentId(paymentId: string): Promise<MessageRequest | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT
+           mr.id,
+           mr.payment_request_id,
+           mr.group_id,
+           mr.wallet_address,
+           mr.sender_name,
+           mr.message,
+           mr.status,
+           mr.last_error,
+           mr.telegram_message_id,
+           mr.telegram_chat_id,
+           mr.sent_at,
+           mr.created_at,
+           mr.updated_at
+         FROM message_requests mr
+         INNER JOIN payment_requests pr ON pr.id = mr.payment_request_id
+         WHERE pr.payment_id = ?`
+      )
+      .bind(paymentId)
+      .first<MessageRequestRow>();
+
+    return row ? mapMessageRequestRow(row) : null;
+  }
+
+  async updateMessageRequest(
+    id: number,
+    input: UpdateMessageRequestInput
+  ): Promise<MessageRequest | null> {
+    const assignments: string[] = [];
+    const values: unknown[] = [];
+
+    if (input.status) {
+      assignments.push('status = ?');
+      values.push(input.status);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(input, 'lastError')) {
+      assignments.push('last_error = ?');
+      values.push(input.lastError ?? null);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(input, 'telegramMessageId')) {
+      assignments.push('telegram_message_id = ?');
+      values.push(input.telegramMessageId ?? null);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(input, 'telegramChatId')) {
+      assignments.push('telegram_chat_id = ?');
+      values.push(input.telegramChatId ?? null);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(input, 'sentAt')) {
+      assignments.push('sent_at = ?');
+      values.push(input.sentAt ?? null);
+    }
+
+    assignments.push('updated_at = CURRENT_TIMESTAMP');
+
+    await this.db
+      .prepare(`UPDATE message_requests SET ${assignments.join(', ')} WHERE id = ?`)
+      .bind(...values, id)
+      .run();
+
+    const row = await this.db
+      .prepare(
+        `SELECT
+           id,
+           payment_request_id,
+           group_id,
+           wallet_address,
+           sender_name,
+           message,
+           status,
+           last_error,
+           telegram_message_id,
+           telegram_chat_id,
+           sent_at,
+           created_at,
+           updated_at
+         FROM message_requests
+         WHERE id = ?`
+      )
+      .bind(id)
+      .first<MessageRequestRow>();
+
+    return row ? mapMessageRequestRow(row) : null;
+  }
+
+  async listPaymentsForWallet(payerAddress: string): Promise<MessagePaymentHistoryEntry[]> {
     const { results } = await this.db
       .prepare(
         `SELECT
@@ -750,7 +970,28 @@ export class AuctionRepository {
            pp.status AS pending_status,
            pp.error AS pending_error,
            pp.created_at AS pending_created_at,
-           pp.updated_at AS pending_updated_at
+           pp.updated_at AS pending_updated_at,
+           mr.id AS message_id,
+           mr.group_id AS message_group_id,
+           mr.status AS message_status,
+           mr.sender_name AS message_sender_name,
+           mr.wallet_address AS message_wallet_address,
+           mr.message AS message_text,
+           mr.last_error AS message_last_error,
+           mr.telegram_message_id AS message_telegram_message_id,
+           mr.telegram_chat_id AS message_telegram_chat_id,
+           mr.sent_at AS message_sent_at,
+           mr.created_at AS message_created_at,
+           mr.updated_at AS message_updated_at,
+           g.name AS group_name,
+           g.category AS group_category,
+           g.telegram_id AS group_telegram_id,
+           g.min_bid AS group_min_bid,
+           g.owner_address AS group_owner_address,
+           g.active AS group_active,
+           g.total_earned AS group_total_earned,
+           g.message_count AS group_message_count,
+           g.created_at AS group_created_at
          FROM payment_requests pr
          LEFT JOIN pending_payments pp ON pp.id = (
            SELECT id
@@ -759,13 +1000,15 @@ export class AuctionRepository {
            ORDER BY created_at DESC
            LIMIT 1
          )
-         WHERE pr.last_payer_address = ? OR pp.payer_address = ?
+         LEFT JOIN message_requests mr ON mr.payment_request_id = pr.id
+         LEFT JOIN groups g ON g.id = COALESCE(mr.group_id, pr.group_id)
+         WHERE mr.wallet_address = ? OR pr.last_payer_address = ? OR pp.payer_address = ?
          ORDER BY COALESCE(pp.created_at, pr.updated_at) DESC`
       )
       .bind(payerAddress, payerAddress)
-      .all<PaymentJoinRow>();
+      .all<MessageJoinRow>();
 
-    return (results ?? []).map(mapPaymentJoinRow);
+    return (results ?? []).map(mapMessageJoinRow);
   }
 }
 
@@ -855,7 +1098,25 @@ function mapPendingPaymentRow(row: PendingPaymentRow): PendingPaymentRecord {
   };
 }
 
-function mapPaymentJoinRow(row: PaymentJoinRow): PaymentHistoryEntry {
+function mapMessageRequestRow(row: MessageRequestRow): MessageRequest {
+  return {
+    id: row.id,
+    paymentRequestId: row.payment_request_id,
+    groupId: row.group_id,
+    walletAddress: row.wallet_address,
+    senderName: row.sender_name,
+    message: row.message,
+    status: row.status as MessageRequestStatus,
+    lastError: row.last_error,
+    telegramMessageId: row.telegram_message_id,
+    telegramChatId: row.telegram_chat_id,
+    sentAt: row.sent_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function mapMessageJoinRow(row: MessageJoinRow): MessagePaymentHistoryEntry {
   const request: PaymentRequestRecord = {
     id: row.request_id,
     paymentId: row.payment_id,
@@ -895,7 +1156,42 @@ function mapPaymentJoinRow(row: PaymentJoinRow): PaymentHistoryEntry {
       }
     : null;
 
-  return { request, pending };
+  const message: MessageRequest | null = row.message_id
+    ? {
+        id: row.message_id,
+        paymentRequestId: row.request_id,
+        groupId: row.message_group_id ?? row.group_id ?? 0,
+        walletAddress: row.message_wallet_address ?? row.last_payer_address ?? '',
+        senderName: row.message_sender_name,
+        message: row.message_text ?? '',
+        status: (row.message_status as MessageRequestStatus) ?? 'awaiting_payment',
+        lastError: row.message_last_error ?? null,
+        telegramMessageId: row.message_telegram_message_id ?? null,
+        telegramChatId: row.message_telegram_chat_id ?? null,
+        sentAt: row.message_sent_at ?? null,
+        createdAt: row.message_created_at ?? request.createdAt,
+        updatedAt: row.message_updated_at ?? request.updatedAt
+      }
+    : null;
+
+  const groupId = row.group_id ?? row.message_group_id ?? null;
+
+  const group: Group | null = groupId
+    ? {
+        id: groupId,
+        name: row.group_name ?? '',
+        category: row.group_category,
+        telegramId: row.group_telegram_id ?? '',
+        minBid: Number(row.group_min_bid ?? request.amount),
+        ownerAddress: row.group_owner_address ?? request.recipient,
+        active: row.group_active === 1,
+        totalEarned: Number(row.group_total_earned ?? 0),
+        messageCount: Number(row.group_message_count ?? 0),
+        createdAt: row.group_created_at ?? request.createdAt
+      }
+    : null;
+
+  return { request, pending, message, group };
 }
 
 function collectTelegramIdentifiers(primary: string, alternates: string[]): string[] {
