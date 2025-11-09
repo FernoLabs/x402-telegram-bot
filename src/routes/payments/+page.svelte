@@ -11,6 +11,7 @@
   let loading = false;
   let error: string | null = null;
   let lastWallet: string | null = null;
+  let refreshingPaymentId: number | null = null;
 
   async function fetchPayments(address: string): Promise<void> {
     loading = true;
@@ -35,8 +36,23 @@
   }
 
   function refresh(): void {
+    refreshingPaymentId = null;
     if ($wallet.connected && $wallet.publicKey) {
       void fetchPayments($wallet.publicKey);
+    }
+  }
+
+  async function refreshEntry(entry: PaymentHistoryEntry): Promise<void> {
+    if (!$wallet.connected || !$wallet.publicKey) {
+      return;
+    }
+
+    refreshingPaymentId = entry.request.id;
+
+    try {
+      await fetchPayments($wallet.publicKey);
+    } finally {
+      refreshingPaymentId = null;
     }
   }
 
@@ -69,6 +85,11 @@
       return null;
     }
     return `${signature.slice(0, 8)}…${signature.slice(-6)}`;
+  }
+
+  function canRefreshEntry(entry: PaymentHistoryEntry): boolean {
+    const status = entry.pending?.status ?? entry.request.status;
+    return status === 'pending' || status === 'submitted' || status === 'failed';
   }
 
   $: if ($wallet.connected && $wallet.publicKey) {
@@ -140,6 +161,21 @@
               <span class={`status-pill ${formatStatus(entry).toLowerCase()}`}>
                 {formatStatus(entry)}
               </span>
+              {#if canRefreshEntry(entry)}
+                <button
+                  type="button"
+                  class="row-refresh"
+                  on:click={() => void refreshEntry(entry)}
+                  aria-busy={loading && refreshingPaymentId === entry.request.id}
+                  disabled={loading}
+                >
+                  {#if loading && refreshingPaymentId === entry.request.id}
+                    Refreshing…
+                  {:else}
+                    Refresh
+                  {/if}
+                </button>
+              {/if}
               {#if entry.pending?.error}
                 <div class="status-note">{entry.pending.error}</div>
               {/if}
@@ -283,6 +319,35 @@
   .status-pill.pending {
     background: rgba(251, 191, 36, 0.12);
     color: #d97706;
+  }
+
+  .row-refresh {
+    margin-top: 0.5rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    background: transparent;
+    border: 1px solid #d1d5db;
+    border-radius: 999px;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #1f2937;
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+  }
+
+  .row-refresh:hover,
+  .row-refresh:focus-visible {
+    background: #111827;
+    color: #f9fafb;
+    border-color: #111827;
+  }
+
+  .row-refresh[disabled] {
+    cursor: not-allowed;
+    opacity: 0.6;
   }
 
   .status-note {
