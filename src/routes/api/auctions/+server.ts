@@ -86,7 +86,11 @@ export const POST: RequestHandler = async ({ request, platform }) => {
     const receiver = env.RECEIVER_ADDRESS ?? group.ownerAddress;
     const currency = env.PAYMENT_CURRENCY ?? 'USDC';
     const network = env.PAYMENT_NETWORK ?? 'solana';
-    const solanaRpcUrl = env.SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com';
+    const solanaRpcUrl = env.SOLANA_RPC_URL;
+    if (!solanaRpcUrl) {
+      console.error('SOLANA_RPC_URL is not configured.');
+      return json({ error: 'Solana RPC URL is not configured.' }, { status: 500 });
+    }
     const solanaMint = env.SOLANA_USDC_MINT_ADDRESS ?? null;
     const solanaCommitment = normalizeCommitment(env.SOLANA_COMMITMENT);
 

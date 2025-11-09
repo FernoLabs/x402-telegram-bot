@@ -90,7 +90,6 @@ interface VerifiedPaymentDetails extends PaymentDetails {
   blockTime: number | null;
 }
 
-export const DEFAULT_SOLANA_RPC_URL = 'https://api.mainnet-beta.solana.com';
 const DEFAULT_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const LAMPORTS_PER_SOL = 1_000_000_000;
 const EPSILON = 1e-7;
@@ -258,7 +257,10 @@ async function fetchTransaction(
 }
 
 export async function verifySolanaPayment(options: VerifySolanaPaymentOptions): Promise<VerifiedPaymentDetails | null> {
-  const rpcUrl = options.rpcUrl ?? DEFAULT_SOLANA_RPC_URL;
+  const rpcUrl = options.rpcUrl;
+  if (!rpcUrl) {
+    throw new Error('Solana RPC URL is not configured.');
+  }
   const commitment = options.commitment ?? 'confirmed';
   const result = await fetchTransaction(options.signature, rpcUrl, commitment);
 
