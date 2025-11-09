@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+        import { onDestroy } from 'svelte';
 	import { PUBLIC_SOLANA_RPC_ENDPOINT } from '$lib/config';
 	import { wallet } from '$lib/wallet/wallet.svelte';
 	import type { MessagePaymentHistoryEntry } from '$lib/types';
@@ -47,22 +47,42 @@
 	let refreshing = false;
 	let actionStatus: Record<string, string | null> = {};
 	let actionError: Record<string, string | null> = {};
-	let lastWallet: string | null = null;
+        let lastWallet: string | null = null;
+        let verificationInterval: ReturnType<typeof setInterval> | null = null;
+        let verificationRequestInFlight = false;
 
-	$: walletState = $wallet;
-	$: walletAddress = walletState.publicKey;
+        $: walletState = $wallet;
+        $: walletAddress = walletState.publicKey;
+        $: awaitingSignatureVerification = payments.some(
+                (entry) => entry.message?.status === 'signature_saved' && entry.request.status !== 'confirmed'
+        );
 
-	$: if (walletAddress && walletAddress !== lastWallet) {
-		lastWallet = walletAddress;
-		void loadPayments(true);
-	} else if (!walletAddress && lastWallet) {
-		lastWallet = null;
-		payments = [];
-	}
+        $: if (walletAddress && walletAddress !== lastWallet) {
+                lastWallet = walletAddress;
+                void loadPayments(true);
+        } else if (!walletAddress && lastWallet) {
+                lastWallet = null;
+                payments = [];
+                stopVerificationPolling();
+        }
 
-	onDestroy(() => {
-		payments = [];
-	});
+        onDestroy(() => {
+                payments = [];
+                stopVerificationPolling();
+        });
+
+        $: {
+                if (walletAddress && awaitingSignatureVerification) {
+                        if (!verificationInterval) {
+                                void pollVerificationStatus();
+                                verificationInterval = setInterval(() => {
+                                        void pollVerificationStatus();
+                                }, 1000);
+                        }
+                } else {
+                        stopVerificationPolling();
+                }
+        }
 
 	async function loadPayments(force = false) {
 		if (!walletAddress) {
@@ -93,14 +113,34 @@
 		} finally {
 			loading = false;
 		}
-	}
+        }
 
-	function setAction(paymentId: string, status: string | null, error?: string | null) {
-		actionStatus = { ...actionStatus, [paymentId]: status };
-		if (error !== undefined) {
-			actionError = { ...actionError, [paymentId]: error };
-		}
-	}
+        function setAction(paymentId: string, status: string | null, error?: string | null) {
+                actionStatus = { ...actionStatus, [paymentId]: status };
+                if (error !== undefined) {
+                        actionError = { ...actionError, [paymentId]: error };
+                }
+        }
+
+        function stopVerificationPolling() {
+                if (verificationInterval) {
+                        clearInterval(verificationInterval);
+                        verificationInterval = null;
+                }
+        }
+
+        async function pollVerificationStatus() {
+                if (verificationRequestInFlight || !walletAddress) {
+                        return;
+                }
+
+                verificationRequestInFlight = true;
+                try {
+                        await loadPayments(true);
+                } finally {
+                        verificationRequestInFlight = false;
+                }
+        }
 
 	function updatePaymentEntry(update: MessagePaymentHistoryEntry) {
 		const paymentId = update.request.paymentId;
@@ -188,14 +228,18 @@
 		}
 	}
 
-	function canPay(entry: MessagePaymentHistoryEntry): boolean {
-		return entry.message?.status === 'awaiting_payment' && entry.request.status === 'pending';
-	}
+        function canPay(entry: MessagePaymentHistoryEntry): boolean {
+                return entry.message?.status === 'awaiting_payment' && entry.request.status === 'pending';
+        }
 
-	function canVerify(entry: MessagePaymentHistoryEntry): boolean {
-		const hasSignature = Boolean(entry.pending?.signature || entry.request.lastSignature);
-		return hasSignature && entry.request.status !== 'confirmed';
-	}
+        function canVerify(entry: MessagePaymentHistoryEntry): boolean {
+                const hasSignature = Boolean(entry.pending?.signature || entry.request.lastSignature);
+                return hasSignature && entry.request.status !== 'confirmed';
+        }
+
+        function isAwaitingSignatureVerification(entry: MessagePaymentHistoryEntry): boolean {
+                return entry.message?.status === 'signature_saved' && entry.request.status !== 'confirmed';
+        }
 
 	function canResend(entry: MessagePaymentHistoryEntry): boolean {
 		return entry.request.status === 'confirmed';
@@ -466,7 +510,13 @@
 							{entry.request.currency?.toUpperCase() ?? 'USDC'}</span
 						>
 					</div>
-					<p class="status-description">{status.description}</p>
+                                        <p class="status-description">{status.description}</p>
+                                        {#if isAwaitingSignatureVerification(entry) && verificationRequestInFlight}
+                                                <div class="auto-refresh" aria-live="polite">
+                                                        <span class="spinner" role="status" aria-label="Checking status"></span>
+                                                        <span>Checking status…</span>
+                                                </div>
+                                        {/if}
 					<section class="details">
 						<h4>Message</h4>
 						<p class="message-text">
@@ -665,10 +715,34 @@
 		color: #475569;
 	}
 
-	.status-description {
-		margin: 0;
-		color: #4b5563;
-	}
+        .status-description {
+                margin: 0;
+                color: #4b5563;
+        }
+
+        .auto-refresh {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.5rem;
+                margin-top: 0.75rem;
+                color: #0369a1;
+                font-weight: 500;
+        }
+
+        .spinner {
+                width: 1.5rem;
+                height: 1.5rem;
+                border-radius: 50%;
+                border: 3px solid rgba(37, 99, 235, 0.2);
+                border-top-color: #2563eb;
+                animation: spin 0.75s linear infinite;
+        }
+
+        @keyframes spin {
+                to {
+                        transform: rotate(360deg);
+                }
+        }
 
 	.details h4 {
 		margin: 0 0 0.5rem;
