@@ -387,6 +387,50 @@
                 }
         }
 
+        async function pollPendingPayments(): Promise<void> {
+                if (walletPublicKey) {
+                        await syncServerPayments(walletPublicKey, true);
+                        return;
+                }
+
+                if (!activePaymentId) {
+                        return;
+                }
+
+                const pendingRequest = pendingPayments.find((item) => item.internalId === activePaymentId) ?? null;
+                if (!pendingRequest) {
+                        return;
+                }
+
+                const signatureValue = signatureInputs[activePaymentId]?.trim() ?? '';
+                if (!signatureValue) {
+                        return;
+                }
+
+                const backendPaymentId =
+                        typeof pendingRequest.paymentId === 'string' ? pendingRequest.paymentId.trim() : '';
+                if (!backendPaymentId) {
+                        return;
+                }
+
+                const storedTransaction = transactionRecords[activePaymentId] ?? null;
+
+                try {
+                        const submission = await submitPaymentToBackend({
+                                paymentId: backendPaymentId,
+                                signature: signatureValue,
+                                wireTransaction: storedTransaction,
+                                payer: walletPublicKey
+                        });
+
+                        if (submission.payment) {
+                                applyServerPayments([submission.payment]);
+                        }
+                } catch (error) {
+                        console.warn('Failed to poll pending payment status', error);
+                }
+        }
+
         if (browser) {
                 const stored = loadStoredPendingPayments();
                 if (stored.length > 0) {
@@ -475,11 +519,11 @@
 		}
 	};
 
-	async function fetchJsonOrThrow<T>(
-		input: RequestInfo,
-		fallbackMessage: string,
-		init?: RequestInit
-	): Promise<T> {
+        async function fetchJsonOrThrow<T>(
+                input: RequestInfo,
+                fallbackMessage: string,
+                init?: RequestInit
+        ): Promise<T> {
 		const response = await fetch(input, init);
 		const text = await response.text();
 		const payload = parseJson(text);
@@ -497,6 +541,68 @@
                 }
 
                 return payload as T;
+        }
+
+        interface PaymentSubmissionResult {
+                payment: PaymentHistoryEntry | null;
+                error: string | null;
+                status: number;
+        }
+
+        async function submitPaymentToBackend(params: {
+                paymentId: string;
+                signature?: string | null;
+                wireTransaction?: string | null;
+                payer?: string | null;
+        }): Promise<PaymentSubmissionResult> {
+                const body: Record<string, unknown> = { paymentId: params.paymentId };
+
+                if (params.signature && params.signature.trim()) {
+                        body.signature = params.signature.trim();
+                }
+
+                if (params.wireTransaction && params.wireTransaction.trim()) {
+                        body.wireTransaction = params.wireTransaction.trim();
+                }
+
+                if (params.payer && params.payer.trim()) {
+                        body.payer = params.payer.trim();
+                }
+
+                const response = await fetch('/api/payments', {
+                        method: 'POST',
+                        headers: { 'content-type': 'application/json' },
+                        body: JSON.stringify(body)
+                });
+
+                const text = await response.text();
+                const payload = parseJson(text);
+                const paymentEntry =
+                        payload && typeof payload === 'object' && 'payment' in payload
+                                ? ((payload as { payment?: PaymentHistoryEntry | null }).payment ?? null)
+                                : null;
+
+                if (!response.ok) {
+                        const message =
+                                payload &&
+                                typeof payload === 'object' &&
+                                payload !== null &&
+                                'error' in payload
+                                        ? String((payload as { error?: unknown }).error ?? 'Failed to submit the transaction to the backend.')
+                                        : 'Failed to submit the transaction to the backend.';
+
+                        return { payment: paymentEntry, error: message, status: response.status };
+                }
+
+                if (!paymentEntry) {
+                        return {
+                                payment: null,
+                                error: 'Unexpected response from the payment API.',
+                                status: response.status
+                        };
+                }
+
+                return { payment: paymentEntry, error: null, status: response.status };
         }
 
         const encodePaymentMetadata = (metadata: Record<string, unknown>): string => {
@@ -885,15 +991,100 @@
 			return;
 		}
 
-		resetStatus();
-		loading = true;
+                resetStatus();
+                loading = true;
 
-		const signatureTargetId = activePaymentId;
-		const trimmedSignature = signatureTargetId
-			? (signatureInputs[signatureTargetId]?.trim() ?? '')
-			: '';
+                const signatureTargetId = activePaymentId;
+                const trimmedSignature = signatureTargetId
+                        ? (signatureInputs[signatureTargetId]?.trim() ?? '')
+                        : '';
 
                 try {
+                        const pendingRequest = activePayment;
+                        const hasPendingSubmission = pendingRequest !== null && pendingPayments.length > 0;
+
+                        if (hasPendingSubmission) {
+                                const errorKey = pendingRequest.internalId;
+
+                                if (!trimmedSignature) {
+                                        signatureErrors = {
+                                                ...signatureErrors,
+                                                [errorKey]: 'Paste the transaction signature before resubmitting.'
+                                        };
+                                        return;
+                                }
+
+                                const backendPaymentId =
+                                        typeof pendingRequest.paymentId === 'string'
+                                                ? pendingRequest.paymentId.trim()
+                                                : '';
+
+                                if (!backendPaymentId) {
+                                        signatureErrors = {
+                                                ...signatureErrors,
+                                                [errorKey]:
+                                                        'The payment request is missing its backend identifier. Regenerate the payment instructions and try again.'
+                                        };
+                                        return;
+                                }
+
+                                const storedTransaction = signatureTargetId
+                                        ? transactionRecords[signatureTargetId] ?? null
+                                        : null;
+
+                                const { [errorKey]: _previousError, ...remainingErrors } = signatureErrors;
+                                signatureErrors = remainingErrors;
+
+                                const submission = await submitPaymentToBackend({
+                                        paymentId: backendPaymentId,
+                                        signature: trimmedSignature,
+                                        wireTransaction: storedTransaction,
+                                        payer: walletPublicKey
+                                });
+
+                                if (submission.payment) {
+                                        applyServerPayments([submission.payment]);
+                                }
+
+                                if (submission.error) {
+                                        signatureErrors = { ...signatureErrors, [errorKey]: submission.error };
+                                        return;
+                                }
+
+                                if (!submission.payment) {
+                                        signatureErrors = {
+                                                ...signatureErrors,
+                                                [errorKey]: 'We could not store that payment signature. Try again.'
+                                        };
+                                        return;
+                                }
+
+                                const { payment: paymentRecord } = submission;
+                                const pendingStatus = paymentRecord.pending?.status ?? paymentRecord.request.status;
+
+                                if (pendingStatus === 'failed') {
+                                        signatureErrors = {
+                                                ...signatureErrors,
+                                                [errorKey]:
+                                                        paymentRecord.pending?.error ??
+                                                        'The backend could not submit this transaction. Try signing and sending again.'
+                                        };
+                                        return;
+                                }
+
+                                const confirmed =
+                                        paymentRecord.request.status === 'confirmed' ||
+                                        paymentRecord.pending?.status === 'confirmed' ||
+                                        Boolean(paymentRecord.verification);
+
+                                if (!confirmed) {
+                                        if (walletPublicKey) {
+                                                await syncServerPayments(walletPublicKey, true);
+                                        }
+                                        return;
+                                }
+                        }
+
                         const headers: Record<string, string> = { 'content-type': 'application/json' };
                         if (trimmedSignature) {
                                 headers['x-payment-txhash'] = trimmedSignature;
@@ -1149,64 +1340,38 @@
 
                         walletStatus = 'Transaction signed. Submitting to the backend…';
 
-                        const submissionResponse = await fetch('/api/payments', {
-                                method: 'POST',
-                                headers: { 'content-type': 'application/json' },
-                                body: JSON.stringify({
-                                        paymentId: backendPaymentId,
-                                        wireTransaction: signed.wireTransaction,
-                                        payer: signed.payer
-                                })
+                        const submission = await submitPaymentToBackend({
+                                paymentId: backendPaymentId,
+                                wireTransaction: signed.wireTransaction,
+                                signature: signed.signature,
+                                payer: signed.payer
                         });
 
-                        const submissionPayload = parseJson(await submissionResponse.text());
+                        if (submission.payment) {
+                                applyServerPayments([submission.payment]);
 
-                        if (!submissionResponse.ok) {
-                                const errorMessage =
-                                        submissionPayload &&
-                                        typeof submissionPayload === 'object' &&
-                                        'error' in submissionPayload
-                                                ? String(
-                                                          (submissionPayload as { error?: unknown }).error ??
-                                                                  'Failed to submit the transaction to the backend.'
-                                                  )
-                                                : 'Failed to submit the transaction to the backend.';
-                                walletError = errorMessage;
-                                walletStatus = null;
-
-                                const paymentDetails =
-                                        submissionPayload &&
-                                        typeof submissionPayload === 'object' &&
-                                        'payment' in submissionPayload
-                                                ? (submissionPayload as {
-                                                          payment?: {
-                                                                  pending?: {
-                                                                          signature?: string | null;
-                                                                          wireTransaction?: string | null;
-                                                                          status?: string | null;
-                                                                          error?: string | null;
-                                                                  };
-                                                          };
-                                                  }).payment ?? null
-                                                : null;
-
-                                if (paymentDetails?.pending?.signature) {
-                                        updateSignatureForActive(paymentDetails.pending.signature, {
+                                if (submission.payment.pending?.signature) {
+                                        updateSignatureForActive(submission.payment.pending.signature, {
                                                 transaction:
-                                                        paymentDetails.pending.wireTransaction ?? signed.wireTransaction,
-                                                markSubmitted: paymentDetails.pending.status !== 'failed'
+                                                        submission.payment.pending.wireTransaction ?? signed.wireTransaction,
+                                                markSubmitted: submission.payment.pending.status !== 'failed'
                                         });
 
                                         if (
-                                                paymentDetails.pending.status === 'failed' &&
-                                                paymentDetails.pending.error
+                                                submission.payment.pending.status === 'failed' &&
+                                                submission.payment.pending.error
                                         ) {
                                                 signatureErrors = {
                                                         ...signatureErrors,
-                                                        [request.internalId]: paymentDetails.pending.error
+                                                        [request.internalId]: submission.payment.pending.error
                                                 };
                                         }
                                 }
+                        }
+
+                        if (submission.error) {
+                                walletError = submission.error;
+                                walletStatus = null;
 
                                 if (state.publicKey) {
                                         await syncServerPayments(state.publicKey, true);
@@ -1215,37 +1380,12 @@
                                 return;
                         }
 
-                        const paymentPayload =
-                                submissionPayload && typeof submissionPayload === 'object'
-                                        ? (submissionPayload as {
-                                                  payment?: {
-                                                          pending?: {
-                                                                  signature?: string | null;
-                                                                  wireTransaction?: string | null;
-                                                                  status?: string | null;
-                                                                  error?: string | null;
-                                                          };
-                                                          verification?: unknown;
-                                                  };
-                                          }).payment ?? null
-                                        : null;
-
-                        const resolvedSignature =
-                                paymentPayload?.pending?.signature ?? signed.signature;
-                        const resolvedTransaction =
-                                paymentPayload?.pending?.wireTransaction ?? signed.wireTransaction;
-
-                        updateSignatureForActive(resolvedSignature, {
-                                transaction: resolvedTransaction,
-                                markSubmitted: true
-                        });
-
-                        if (paymentPayload?.pending?.status === 'failed') {
+                        if (submission.payment?.pending?.status === 'failed') {
                                 walletError =
-                                        paymentPayload.pending.error ??
+                                        submission.payment.pending.error ??
                                         'The backend reported a failure while broadcasting the transaction.';
                                 walletStatus = null;
-                        } else if (paymentPayload?.verification) {
+                        } else if (submission.payment?.verification) {
                                 walletStatus =
                                         'Payment confirmed on-chain. Resubmit the form to post your message.';
                         } else {
@@ -1311,7 +1451,7 @@
                         if (!autoRefreshTimer) {
                                 autoRefreshTimer = setInterval(() => {
                                         if (!loading) {
-                                                void requestPayment();
+                                                void pollPendingPayments();
                                         }
                                 }, AUTO_REFRESH_INTERVAL_MS);
                         }
