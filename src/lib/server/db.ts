@@ -109,14 +109,14 @@ interface PaymentJoinRow {
   last_payer_address: string | null;
   request_created_at: string;
   request_updated_at: string;
-  pending_id: number;
+  pending_id: number | null;
   pending_signature: string | null;
   pending_wire_transaction: string | null;
   pending_payer_address: string | null;
-  pending_status: string;
+  pending_status: string | null;
   pending_error: string | null;
-  pending_created_at: string;
-  pending_updated_at: string;
+  pending_created_at: string | null;
+  pending_updated_at: string | null;
 }
 
 interface CreatePaymentRequestInput {
@@ -751,12 +751,18 @@ export class AuctionRepository {
            pp.error AS pending_error,
            pp.created_at AS pending_created_at,
            pp.updated_at AS pending_updated_at
-         FROM pending_payments pp
-         INNER JOIN payment_requests pr ON pr.id = pp.request_id
-         WHERE pp.payer_address = ?
-         ORDER BY pp.created_at DESC`
+         FROM payment_requests pr
+         LEFT JOIN pending_payments pp ON pp.id = (
+           SELECT id
+           FROM pending_payments
+           WHERE request_id = pr.id
+           ORDER BY created_at DESC
+           LIMIT 1
+         )
+         WHERE pr.last_payer_address = ? OR pp.payer_address = ?
+         ORDER BY COALESCE(pp.created_at, pr.updated_at) DESC`
       )
-      .bind(payerAddress)
+      .bind(payerAddress, payerAddress)
       .all<PaymentJoinRow>();
 
     return (results ?? []).map(mapPaymentJoinRow);
@@ -875,17 +881,19 @@ function mapPaymentJoinRow(row: PaymentJoinRow): PaymentHistoryEntry {
     updatedAt: row.request_updated_at
   };
 
-  const pending: PendingPaymentRecord = {
-    id: row.pending_id,
-    requestId: row.request_id,
-    signature: row.pending_signature,
-    wireTransaction: row.pending_wire_transaction,
-    payerAddress: row.pending_payer_address,
-    status: row.pending_status as PendingPaymentStatus,
-    error: row.pending_error,
-    createdAt: row.pending_created_at,
-    updatedAt: row.pending_updated_at
-  };
+  const pending: PendingPaymentRecord | null = row.pending_id
+    ? {
+        id: row.pending_id,
+        requestId: row.request_id,
+        signature: row.pending_signature,
+        wireTransaction: row.pending_wire_transaction,
+        payerAddress: row.pending_payer_address,
+        status: (row.pending_status as PendingPaymentStatus) ?? 'pending',
+        error: row.pending_error,
+        createdAt: row.pending_created_at ?? request.updatedAt,
+        updatedAt: row.pending_updated_at ?? request.updatedAt
+      }
+    : null;
 
   return { request, pending };
 }
