@@ -1,4 +1,8 @@
 import type { PaymentDetails } from '$lib/types';
+import { getTransactionDecoder } from '@solana/transactions';
+import * as ed25519 from '@noble/ed25519';
+import bs58 from 'bs58';
+import { Buffer } from 'buffer';
 
 interface JsonRpcRequest {
   jsonrpc: '2.0';
@@ -88,6 +92,76 @@ interface VerifySolanaPaymentOptions {
 interface VerifiedPaymentDetails extends PaymentDetails {
   slot: number;
   blockTime: number | null;
+}
+
+interface VerifyWireTransactionSignatureOptions {
+  wireTransaction: string;
+  expectedSignature?: string | null;
+  expectedSigner?: string | null;
+}
+
+export interface VerifiedWireTransactionSignature {
+  signers: string[];
+  signature: string | null;
+}
+
+export async function verifyWireTransactionSignature(
+  options: VerifyWireTransactionSignatureOptions
+): Promise<VerifiedWireTransactionSignature | null> {
+  try {
+    const wireBytes = Buffer.from(options.wireTransaction, 'base64');
+    const decoder = getTransactionDecoder();
+    const decoded = decoder.decode(wireBytes);
+    const messageBytes = Uint8Array.from(decoded.messageBytes);
+    const signers: string[] = [];
+    let matchedSignature: string | null = null;
+
+    for (const [address, signatureBytes] of Object.entries(decoded.signatures)) {
+      if (!signatureBytes) {
+        continue;
+      }
+
+      const signatureBase58 = bs58.encode(signatureBytes);
+      const publicKeyBytes = bs58.decode(address);
+      const isValid = await ed25519.verify(signatureBytes, messageBytes, publicKeyBytes);
+
+      if (!isValid) {
+        return null;
+      }
+
+      signers.push(address);
+
+      if (!matchedSignature) {
+        matchedSignature = signatureBase58;
+      }
+
+      if (options.expectedSignature && signatureBase58 !== options.expectedSignature) {
+        continue;
+      }
+
+      matchedSignature = signatureBase58;
+    }
+
+    if (signers.length === 0) {
+      return null;
+    }
+
+    if (options.expectedSigner && !signers.includes(options.expectedSigner)) {
+      return null;
+    }
+
+    if (options.expectedSignature && matchedSignature !== options.expectedSignature) {
+      return null;
+    }
+
+    return {
+      signers,
+      signature: matchedSignature
+    };
+  } catch (error) {
+    console.warn('Failed to verify provided Solana transaction', error);
+    return null;
+  }
 }
 
 export const DEFAULT_SOLANA_RPC_URL = 'https://api.mainnet-beta.solana.com';

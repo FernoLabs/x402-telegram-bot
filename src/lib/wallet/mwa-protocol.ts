@@ -1,4 +1,5 @@
 import { browser } from '$app/environment';
+import { Buffer } from 'buffer';
 
 export const MWA_PROTOCOL_VERSION = '2.0';
 

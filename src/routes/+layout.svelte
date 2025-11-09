@@ -9,7 +9,8 @@
     { href: '/', label: 'Overview' },
     { href: '/setup', label: 'Setup Guide' },
     { href: '/groups', label: 'Groups' },
-    { href: '/send', label: 'Send a Message' }
+    { href: '/send', label: 'Send a Message' },
+    { href: '/payments', label: 'Payments' }
   ];
 </script>
 
@@ -17,7 +18,7 @@
   <link rel="icon" href={favicon} />
 </svelte:head>
 
-<WalletProvider rpcEndpoint="https://api.mainnet-beta.solana.com" />
+<WalletProvider rpcEndpoint="/api/solana/rpc" />
 
 <div class="app-shell">
   <header>

@@ -3,7 +3,12 @@ import type {
   AuctionResponse,
   CreateAuctionInput,
   CreateGroupInput,
-  Group
+  Group,
+  PaymentHistoryEntry,
+  PaymentRequestRecord,
+  PaymentRequestStatus,
+  PendingPaymentRecord,
+  PendingPaymentStatus
 } from '$lib/types';
 
 interface GroupRow {
@@ -42,6 +47,118 @@ interface ResponseRow {
   username: string | null;
   text: string;
   created_at: string;
+}
+
+interface PaymentRequestRow {
+  id: number;
+  payment_id: string;
+  nonce: string;
+  group_id: number | null;
+  amount: number;
+  currency: string;
+  network: string;
+  recipient: string;
+  memo: string | null;
+  instructions: string | null;
+  resource: string | null;
+  description: string | null;
+  asset_address: string | null;
+  asset_type: string | null;
+  checkout_url: string | null;
+  facilitator_url: string | null;
+  status: string;
+  expires_at: string;
+  last_signature: string | null;
+  last_payer_address: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface PendingPaymentRow {
+  id: number;
+  request_id: number;
+  signature: string | null;
+  wire_transaction: string | null;
+  payer_address: string | null;
+  status: string;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface PaymentJoinRow {
+  request_id: number;
+  payment_id: string;
+  nonce: string;
+  group_id: number | null;
+  amount: number;
+  currency: string;
+  network: string;
+  recipient: string;
+  memo: string | null;
+  instructions: string | null;
+  resource: string | null;
+  description: string | null;
+  asset_address: string | null;
+  asset_type: string | null;
+  checkout_url: string | null;
+  facilitator_url: string | null;
+  request_status: string;
+  expires_at: string;
+  last_signature: string | null;
+  last_payer_address: string | null;
+  request_created_at: string;
+  request_updated_at: string;
+  pending_id: number;
+  pending_signature: string | null;
+  pending_wire_transaction: string | null;
+  pending_payer_address: string | null;
+  pending_status: string;
+  pending_error: string | null;
+  pending_created_at: string;
+  pending_updated_at: string;
+}
+
+interface CreatePaymentRequestInput {
+  paymentId?: string;
+  nonce?: string;
+  groupId?: number | null;
+  amount: number;
+  currency: string;
+  network: string;
+  recipient: string;
+  memo?: string | null;
+  instructions?: string | null;
+  resource?: string | null;
+  description?: string | null;
+  assetAddress?: string | null;
+  assetType?: string | null;
+  checkoutUrl?: string | null;
+  facilitatorUrl?: string | null;
+  expiresInSeconds?: number;
+}
+
+interface UpdatePaymentRequestStatusInput {
+  status: PaymentRequestStatus;
+  lastSignature?: string | null;
+  lastPayerAddress?: string | null;
+}
+
+interface CreatePendingPaymentInput {
+  requestId: number;
+  signature?: string | null;
+  wireTransaction?: string | null;
+  payerAddress?: string | null;
+  status?: PendingPaymentStatus;
+  error?: string | null;
+}
+
+interface UpdatePendingPaymentInput {
+  status?: PendingPaymentStatus;
+  error?: string | null;
+  signature?: string | null;
+  wireTransaction?: string | null;
+  payerAddress?: string | null;
 }
 
 export class AuctionRepository {
@@ -343,6 +460,307 @@ export class AuctionRepository {
 
     return (results ?? []).map(mapResponseRow);
   }
+
+  private resolvePaymentIdentifier(candidate?: string | null): string {
+    if (candidate && candidate.trim()) {
+      return candidate.trim();
+    }
+
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+
+    return `payment-${Date.now()}-${Math.random()}`;
+  }
+
+  async createPaymentRequest(input: CreatePaymentRequestInput): Promise<PaymentRequestRecord> {
+    const paymentId = this.resolvePaymentIdentifier(input.paymentId ?? null);
+    const nonce = this.resolvePaymentIdentifier(input.nonce ?? null);
+    const expiresInSeconds = input.expiresInSeconds && input.expiresInSeconds > 0
+      ? input.expiresInSeconds
+      : 10 * 60;
+    const expiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
+
+    await this.db
+      .prepare(
+        `INSERT INTO payment_requests (
+           payment_id,
+           nonce,
+           group_id,
+           amount,
+           currency,
+           network,
+           recipient,
+           memo,
+           instructions,
+           resource,
+           description,
+           asset_address,
+           asset_type,
+           checkout_url,
+           facilitator_url,
+           status,
+           expires_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`
+      )
+      .bind(
+        paymentId,
+        nonce,
+        input.groupId ?? null,
+        input.amount,
+        input.currency,
+        input.network,
+        input.recipient,
+        input.memo ?? null,
+        input.instructions ?? null,
+        input.resource ?? null,
+        input.description ?? null,
+        input.assetAddress ?? null,
+        input.assetType ?? null,
+        input.checkoutUrl ?? null,
+        input.facilitatorUrl ?? null,
+        expiresAt
+      )
+      .run();
+
+    const row = await this.db
+      .prepare(
+        `SELECT id, payment_id, nonce, group_id, amount, currency, network, recipient, memo, instructions,
+                resource, description, asset_address, asset_type, checkout_url, facilitator_url, status,
+                expires_at, last_signature, last_payer_address, created_at, updated_at
+         FROM payment_requests
+         WHERE payment_id = ?`
+      )
+      .bind(paymentId)
+      .first<PaymentRequestRow>();
+
+    if (!row) {
+      throw new Error('Failed to fetch payment request after insert');
+    }
+
+    return mapPaymentRequestRow(row);
+  }
+
+  async getPaymentRequestById(id: number): Promise<PaymentRequestRecord | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT id, payment_id, nonce, group_id, amount, currency, network, recipient, memo, instructions,
+                resource, description, asset_address, asset_type, checkout_url, facilitator_url, status,
+                expires_at, last_signature, last_payer_address, created_at, updated_at
+         FROM payment_requests
+         WHERE id = ?`
+      )
+      .bind(id)
+      .first<PaymentRequestRow>();
+
+    return row ? mapPaymentRequestRow(row) : null;
+  }
+
+  async getPaymentRequestByPaymentId(paymentId: string): Promise<PaymentRequestRecord | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT id, payment_id, nonce, group_id, amount, currency, network, recipient, memo, instructions,
+                resource, description, asset_address, asset_type, checkout_url, facilitator_url, status,
+                expires_at, last_signature, last_payer_address, created_at, updated_at
+         FROM payment_requests
+         WHERE payment_id = ?`
+      )
+      .bind(paymentId)
+      .first<PaymentRequestRow>();
+
+    return row ? mapPaymentRequestRow(row) : null;
+  }
+
+  async updatePaymentRequestStatus(
+    requestId: number,
+    updates: UpdatePaymentRequestStatusInput
+  ): Promise<PaymentRequestRecord | null> {
+    const assignments: string[] = ['status = ?'];
+    const values: Array<string | null> = [updates.status];
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'lastSignature')) {
+      assignments.push('last_signature = ?');
+      values.push(updates.lastSignature ?? null);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'lastPayerAddress')) {
+      assignments.push('last_payer_address = ?');
+      values.push(updates.lastPayerAddress ?? null);
+    }
+
+    assignments.push('updated_at = CURRENT_TIMESTAMP');
+
+    await this.db
+      .prepare(`UPDATE payment_requests SET ${assignments.join(', ')} WHERE id = ?`)
+      .bind(...values, requestId)
+      .run();
+
+    return this.getPaymentRequestById(requestId);
+  }
+
+  async createPendingPayment(input: CreatePendingPaymentInput): Promise<PendingPaymentRecord> {
+    const status = input.status ?? 'pending';
+
+    const result = await this.db
+      .prepare(
+        `INSERT INTO pending_payments (
+           request_id,
+           signature,
+           wire_transaction,
+           payer_address,
+           status,
+           error
+         ) VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .bind(
+        input.requestId,
+        input.signature ?? null,
+        input.wireTransaction ?? null,
+        input.payerAddress ?? null,
+        status,
+        input.error ?? null
+      )
+      .run();
+
+    const insertedId = Number(result.meta.last_row_id ?? 0);
+    if (!Number.isFinite(insertedId) || insertedId <= 0) {
+      throw new Error('Failed to insert pending payment');
+    }
+
+    const row = await this.db
+      .prepare(
+        `SELECT id, request_id, signature, wire_transaction, payer_address, status, error, created_at, updated_at
+         FROM pending_payments
+         WHERE id = ?`
+      )
+      .bind(insertedId)
+      .first<PendingPaymentRow>();
+
+    if (!row) {
+      throw new Error('Failed to fetch pending payment after insert');
+    }
+
+    return mapPendingPaymentRow(row);
+  }
+
+  async updatePendingPayment(
+    id: number,
+    updates: UpdatePendingPaymentInput
+  ): Promise<PendingPaymentRecord | null> {
+    const assignments: string[] = [];
+    const values: Array<string | null> = [];
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'status') && updates.status) {
+      assignments.push('status = ?');
+      values.push(updates.status);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'error')) {
+      assignments.push('error = ?');
+      values.push(updates.error ?? null);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'signature')) {
+      assignments.push('signature = ?');
+      values.push(updates.signature ?? null);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'wireTransaction')) {
+      assignments.push('wire_transaction = ?');
+      values.push(updates.wireTransaction ?? null);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'payerAddress')) {
+      assignments.push('payer_address = ?');
+      values.push(updates.payerAddress ?? null);
+    }
+
+    if (assignments.length === 0) {
+      return this.getPendingPaymentById(id);
+    }
+
+    assignments.push('updated_at = CURRENT_TIMESTAMP');
+
+    await this.db
+      .prepare(`UPDATE pending_payments SET ${assignments.join(', ')} WHERE id = ?`)
+      .bind(...values, id)
+      .run();
+
+    return this.getPendingPaymentById(id);
+  }
+
+  async getPendingPaymentById(id: number): Promise<PendingPaymentRecord | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT id, request_id, signature, wire_transaction, payer_address, status, error, created_at, updated_at
+         FROM pending_payments
+         WHERE id = ?`
+      )
+      .bind(id)
+      .first<PendingPaymentRow>();
+
+    return row ? mapPendingPaymentRow(row) : null;
+  }
+
+  async getPendingPaymentBySignature(signature: string): Promise<PendingPaymentRecord | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT id, request_id, signature, wire_transaction, payer_address, status, error, created_at, updated_at
+         FROM pending_payments
+         WHERE signature = ?
+         ORDER BY created_at DESC
+         LIMIT 1`
+      )
+      .bind(signature)
+      .first<PendingPaymentRow>();
+
+    return row ? mapPendingPaymentRow(row) : null;
+  }
+
+  async listPaymentsForWallet(payerAddress: string): Promise<PaymentHistoryEntry[]> {
+    const { results } = await this.db
+      .prepare(
+        `SELECT
+           pr.id AS request_id,
+           pr.payment_id,
+           pr.nonce,
+           pr.group_id,
+           pr.amount,
+           pr.currency,
+           pr.network,
+           pr.recipient,
+           pr.memo,
+           pr.instructions,
+           pr.resource,
+           pr.description,
+           pr.asset_address,
+           pr.asset_type,
+           pr.checkout_url,
+           pr.facilitator_url,
+           pr.status AS request_status,
+           pr.expires_at,
+           pr.last_signature,
+           pr.last_payer_address,
+           pr.created_at AS request_created_at,
+           pr.updated_at AS request_updated_at,
+           pp.id AS pending_id,
+           pp.signature AS pending_signature,
+           pp.wire_transaction AS pending_wire_transaction,
+           pp.payer_address AS pending_payer_address,
+           pp.status AS pending_status,
+           pp.error AS pending_error,
+           pp.created_at AS pending_created_at,
+           pp.updated_at AS pending_updated_at
+         FROM pending_payments pp
+         INNER JOIN payment_requests pr ON pr.id = pp.request_id
+         WHERE pp.payer_address = ?
+         ORDER BY pp.created_at DESC`
+      )
+      .bind(payerAddress)
+      .all<PaymentJoinRow>();
+
+    return (results ?? []).map(mapPaymentJoinRow);
+  }
 }
 
 function mapGroupRow(row: GroupRow): Group {
@@ -388,6 +806,88 @@ function mapResponseRow(row: ResponseRow): AuctionResponse {
     text: row.text,
     createdAt: row.created_at
   };
+}
+
+function mapPaymentRequestRow(row: PaymentRequestRow): PaymentRequestRecord {
+  return {
+    id: row.id,
+    paymentId: row.payment_id,
+    nonce: row.nonce,
+    groupId: row.group_id,
+    amount: Number(row.amount),
+    currency: row.currency,
+    network: row.network,
+    recipient: row.recipient,
+    memo: row.memo,
+    instructions: row.instructions,
+    resource: row.resource,
+    description: row.description,
+    assetAddress: row.asset_address,
+    assetType: row.asset_type,
+    checkoutUrl: row.checkout_url,
+    facilitatorUrl: row.facilitator_url,
+    status: row.status as PaymentRequestStatus,
+    expiresAt: row.expires_at,
+    lastSignature: row.last_signature,
+    lastPayerAddress: row.last_payer_address,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function mapPendingPaymentRow(row: PendingPaymentRow): PendingPaymentRecord {
+  return {
+    id: row.id,
+    requestId: row.request_id,
+    signature: row.signature,
+    wireTransaction: row.wire_transaction,
+    payerAddress: row.payer_address,
+    status: row.status as PendingPaymentStatus,
+    error: row.error,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function mapPaymentJoinRow(row: PaymentJoinRow): PaymentHistoryEntry {
+  const request: PaymentRequestRecord = {
+    id: row.request_id,
+    paymentId: row.payment_id,
+    nonce: row.nonce,
+    groupId: row.group_id,
+    amount: Number(row.amount),
+    currency: row.currency,
+    network: row.network,
+    recipient: row.recipient,
+    memo: row.memo,
+    instructions: row.instructions,
+    resource: row.resource,
+    description: row.description,
+    assetAddress: row.asset_address,
+    assetType: row.asset_type,
+    checkoutUrl: row.checkout_url,
+    facilitatorUrl: row.facilitator_url,
+    status: row.request_status as PaymentRequestStatus,
+    expiresAt: row.expires_at,
+    lastSignature: row.last_signature,
+    lastPayerAddress: row.last_payer_address,
+    createdAt: row.request_created_at,
+    updatedAt: row.request_updated_at
+  };
+
+  const pending: PendingPaymentRecord = {
+    id: row.pending_id,
+    requestId: row.request_id,
+    signature: row.pending_signature,
+    wireTransaction: row.pending_wire_transaction,
+    payerAddress: row.pending_payer_address,
+    status: row.pending_status as PendingPaymentStatus,
+    error: row.pending_error,
+    createdAt: row.pending_created_at,
+    updatedAt: row.pending_updated_at
+  };
+
+  return { request, pending };
 }
 
 function collectTelegramIdentifiers(primary: string, alternates: string[]): string[] {

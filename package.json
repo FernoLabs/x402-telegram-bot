@@ -32,8 +32,9 @@
 		"wrangler": "^4.46.0"
 	},
 	"dependencies": {
-		"@solana-program/memo": "^0.10.0",
-		"@solana-program/system": "^0.10.0",
+                "@noble/ed25519": "^3.0.0",
+                "@solana-program/memo": "^0.10.0",
+                "@solana-program/system": "^0.10.0",
 		"@solana-program/token": "^0.8.0",
 		"@solana/kit": "^5.0.0",
 		"@solana/wallet-standard-features": "^1.1.4",

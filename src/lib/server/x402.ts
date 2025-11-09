@@ -1,5 +1,5 @@
-import type { PaymentDetails } from '$lib/types';
-import { verifySolanaPayment } from './solana';
+import type { PaymentDetails, PaymentRequestRecord } from '$lib/types';
+import { verifySolanaPayment, verifyWireTransactionSignature } from './solana';
 
 const AMOUNT_HEADERS = ['x-402-amount', 'x-payment-amount'];
 const SENDER_HEADERS = ['x-402-sender', 'x-payment-sender'];
@@ -96,6 +96,28 @@ function extractTxHash(payload: Record<string, unknown>): string | null {
   return null;
 }
 
+function extractWireTransaction(payload: Record<string, unknown>): string | null {
+  const candidateKeys = ['transaction', 'wireTransaction', 'serializedTransaction'];
+  for (const key of candidateKeys) {
+    const value = payload[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value;
+    }
+  }
+
+  const nested = payload.payment;
+  if (nested && typeof nested === 'object') {
+    for (const key of candidateKeys) {
+      const value = (nested as Record<string, unknown>)[key];
+      if (typeof value === 'string' && value.trim()) {
+        return value;
+      }
+    }
+  }
+
+  return null;
+}
+
 export async function parsePayment(
   request: Request,
   options?: PaymentValidationOptions
@@ -134,12 +156,28 @@ export async function parsePayment(
   }
 
   const txHashFromPayload = payload ? extractTxHash(payload) : null;
+  const wireTransaction = payload ? extractWireTransaction(payload) : null;
   const txHash = txHashFromPayload ?? legacy.txHash;
 
   const expectedNetwork = options.paymentDetails.network?.toLowerCase();
   const expectedCurrency = options.paymentDetails.currency?.toUpperCase();
 
   if (expectedNetwork === 'solana' && txHash) {
+    const senderFromPayload = payload ? extractSender(payload) : null;
+    let wireSignatureVerification: Awaited<ReturnType<typeof verifyWireTransactionSignature>> | null = null;
+
+    if (wireTransaction) {
+      wireSignatureVerification = await verifyWireTransactionSignature({
+        wireTransaction,
+        expectedSignature: txHash,
+        expectedSigner: senderFromPayload ?? legacy.sender
+      });
+
+      if (!wireSignatureVerification) {
+        return null;
+      }
+    }
+
     const verification = await verifySolanaPayment({
       signature: txHash,
       rpcUrl: options.solana?.rpcUrl,
@@ -154,8 +192,16 @@ export async function parsePayment(
       return null;
     }
 
-    const senderFromPayload = payload ? extractSender(payload) : null;
-    const resolvedSender = senderFromPayload ?? legacy.sender ?? verification.sender;
+    if (
+      wireSignatureVerification &&
+      !wireSignatureVerification.signers.includes(verification.sender)
+    ) {
+      return null;
+    }
+
+    const senderFromTransaction = wireSignatureVerification?.signers[0] ?? null;
+    const resolvedSender =
+      senderFromPayload ?? legacy.sender ?? senderFromTransaction ?? verification.sender;
 
     return {
       amount: verification.amount,
@@ -209,47 +255,47 @@ function sanitizeMemo(value: string | null | undefined): string | null {
 }
 
 export function buildPaymentRequiredResponse(
-  requiredAmount: number,
-  receiverAddress: string,
+  request: PaymentRequestRecord,
   extras?: PaymentResponseExtras
 ): Response {
-  const network = extras?.network ?? 'solana';
-  const currencyCode = extras?.currencyCode ?? 'USDC';
-  const assetAddress = extras?.assetAddress ?? null;
-  const assetType = extras?.assetType ?? null;
-  const memo = sanitizeMemo(extras?.memo);
-  const resource = extras?.resource ?? '/api/auctions';
-  const description = extras?.description ??
+  const requiredAmount = request.amount;
+  const network = request.network || extras?.network || 'solana';
+  const currencyCode = request.currency || extras?.currencyCode || 'USDC';
+  const assetAddress = request.assetAddress ?? extras?.assetAddress ?? null;
+  const assetType = request.assetType ?? extras?.assetType ?? null;
+  const memo = sanitizeMemo(request.memo ?? extras?.memo ?? null);
+  const resource = request.resource ?? extras?.resource ?? '/api/auctions';
+  const description =
+    request.description ??
+    extras?.description ??
     `Payment required to post a message to ${extras?.groupName ?? 'the selected group'}.`;
-  const paymentId = typeof crypto?.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}`;
-  const nonce = typeof crypto?.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
-  const expiresInSeconds = extras?.expiresInSeconds ?? 10 * 60;
-  const expiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
-  const checkoutUrl = extras?.checkoutUrl ?? null;
+  const instructions =
+    request.instructions ??
+    (memo
+      ? `Send ${requiredAmount} ${currencyCode} on ${network} to ${request.recipient} with memo "${memo}". Include the transaction signature in the X-PAYMENT-TXHASH header when resubmitting.`
+      : `Send ${requiredAmount} ${currencyCode} on ${network} to ${request.recipient}. Include the transaction signature in the X-PAYMENT-TXHASH header when resubmitting.`);
+  const checkoutUrl = request.checkoutUrl ?? extras?.checkoutUrl ?? null;
   const facilitatorUrl =
     extras?.facilitatorUrl === null
       ? null
-      : extras?.facilitatorUrl ?? DEFAULT_FACILITATOR_URL;
+      : request.facilitatorUrl ?? extras?.facilitatorUrl ?? DEFAULT_FACILITATOR_URL;
 
   const body: Record<string, unknown> = {
     error: 'Payment Required',
     amount: requiredAmount,
     currency: currencyCode,
-    recipient: receiverAddress,
+    recipient: request.recipient,
     network,
-    instructions:
-      memo
-        ? `Send ${requiredAmount} ${currencyCode} on ${network} to ${receiverAddress} with memo "${memo}". Include the transaction signature in the X-PAYMENT-TXHASH header when resubmitting.`
-        : `Send ${requiredAmount} ${currencyCode} on ${network} to ${receiverAddress}. Include the transaction signature in the X-PAYMENT-TXHASH header when resubmitting.`,
+    instructions,
     maxAmountRequired: requiredAmount,
     currencyCode,
-    paymentAddress: receiverAddress,
+    paymentAddress: request.recipient,
     assetAddress: assetAddress ?? undefined,
     assetType: assetType ?? undefined,
     networkId: network,
-    paymentId,
-    nonce,
-    expiresAt,
+    paymentId: request.paymentId,
+    nonce: request.nonce,
+    expiresAt: request.expiresAt,
     resource,
     description,
     accepts: [
@@ -258,7 +304,7 @@ export function buildPaymentRequiredResponse(
         networkId: network,
         currencyCode,
         amount: requiredAmount,
-        recipient: receiverAddress,
+        recipient: request.recipient,
         assetAddress: assetAddress ?? undefined,
         assetType: assetType ?? undefined,
         memo: memo ?? undefined
@@ -278,30 +324,33 @@ export function buildPaymentRequiredResponse(
     body.facilitator = facilitatorUrl;
   }
 
+  if (memo) {
+    body.memo = memo;
+  }
+
   const headers: Record<string, string> = {
     'content-type': 'application/json',
     'x-payment-required': 'true',
     'x-payment-amount': requiredAmount.toString(),
     'x-payment-currency': currencyCode,
-    'x-payment-recipient': receiverAddress,
+    'x-payment-recipient': request.recipient,
     'x-payment-network': network,
     'x-402-required': 'true',
     'x-402-amount': requiredAmount.toString(),
     'x-402-currency': currencyCode,
-    'x-402-recipient': receiverAddress,
+    'x-402-recipient': request.recipient,
     'x-402-network': network,
     'x-payment-max-amount': requiredAmount.toString(),
-    'x-payment-id': paymentId,
-    'x-payment-nonce': nonce,
-    'x-payment-expires-at': expiresAt,
+    'x-payment-id': request.paymentId,
+    'x-payment-nonce': request.nonce,
+    'x-payment-expires-at': request.expiresAt,
     'x-402-max-amount': requiredAmount.toString(),
-    'x-402-payment-id': paymentId,
-    'x-402-nonce': nonce,
-    'x-402-expires-at': expiresAt
+    'x-402-payment-id': request.paymentId,
+    'x-402-nonce': request.nonce,
+    'x-402-expires-at': request.expiresAt
   };
 
   if (memo) {
-    body.memo = memo;
     headers['x-payment-memo'] = memo;
     headers['x-402-memo'] = memo;
   }

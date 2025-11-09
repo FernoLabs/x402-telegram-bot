@@ -105,15 +105,23 @@ export const POST: RequestHandler = async ({ request, platform }) => {
     });
 
     if (!payment || payment.amount < group.minBid || payment.amount <= 0) {
-      return buildPaymentRequiredResponse(group.minBid, receiver, {
-        currencyCode: currency,
+      const paymentRequest = await repo.createPaymentRequest({
+        groupId: group.id,
+        amount: group.minBid,
+        currency,
         network,
-        groupName: group.name,
+        recipient: receiver,
         memo: message,
         resource: 'POST /api/auctions',
         description: `Send ${currency} on ${network} to publish a paid message in ${group.name}.`,
-        assetAddress: solanaMint ?? undefined,
-        assetType: solanaMint ? 'spl-token' : undefined
+        assetAddress: solanaMint ?? null,
+        assetType: solanaMint ? 'spl-token' : null
+      });
+
+      return buildPaymentRequiredResponse(paymentRequest, {
+        currencyCode: currency,
+        network,
+        groupName: group.name
       });
     }
 
