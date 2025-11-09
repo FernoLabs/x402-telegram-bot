@@ -1024,183 +1024,198 @@ export class AuctionRepository {
 }
 
 function mapGroupRow(row: GroupRow): Group {
-	return {
-		id: row.id,
-		name: row.name,
-		category: row.category,
-		telegramId: row.telegram_id,
-		minBid: Number(row.min_bid),
-		ownerAddress: row.owner_address,
-		active: row.active === 1,
-		totalEarned: Number(row.total_earned ?? 0),
-		messageCount: Number(row.message_count ?? 0),
-		createdAt: row.created_at
-	};
+        return {
+                id: Number(row.id),
+                name: row.name,
+                category: row.category,
+                telegramId: row.telegram_id,
+                minBid: Number(row.min_bid),
+                ownerAddress: row.owner_address,
+                active: Boolean(Number(row.active ?? 0)),
+                totalEarned: Number(row.total_earned ?? 0),
+                messageCount: Number(row.message_count ?? 0),
+                createdAt: row.created_at
+        };
 }
 
 function mapAuctionRow(row: AuctionRow): Auction {
-	return {
-		id: row.id,
-		groupId: row.group_id,
-		bidderAddress: row.bidder_address,
-		bidderName: row.bidder_name,
-		amount: Number(row.amount),
-		message: row.message,
-		status: row.status as Auction['status'],
-		txHash: row.tx_hash,
-		createdAt: row.created_at,
-		postedAt: row.posted_at,
-		telegramMessageId: row.telegram_message_id,
-		telegramChatId: row.telegram_chat_id,
-		errorReason: row.error_reason,
-		responses: []
-	};
+        return {
+                id: Number(row.id),
+                groupId: Number(row.group_id),
+                bidderAddress: row.bidder_address,
+                bidderName: row.bidder_name,
+                amount: Number(row.amount),
+                message: row.message,
+                status: row.status as Auction['status'],
+                txHash: row.tx_hash,
+                createdAt: row.created_at,
+                postedAt: row.posted_at,
+                telegramMessageId:
+                        row.telegram_message_id !== null && row.telegram_message_id !== undefined
+                                ? Number(row.telegram_message_id)
+                                : null,
+                telegramChatId: row.telegram_chat_id,
+                errorReason: row.error_reason,
+                responses: []
+        };
 }
 
 function mapResponseRow(row: ResponseRow): AuctionResponse {
-	return {
-		id: row.id,
-		auctionId: row.auction_id,
-		userId: row.user_id,
-		username: row.username,
-		text: row.text,
-		createdAt: row.created_at
-	};
+        return {
+                id: Number(row.id),
+                auctionId: Number(row.auction_id),
+                userId: row.user_id,
+                username: row.username,
+                text: row.text,
+                createdAt: row.created_at
+        };
 }
 
 function mapPaymentRequestRow(row: PaymentRequestRow): PaymentRequestRecord {
-	return {
-		id: row.id,
-		paymentId: row.payment_id,
-		nonce: row.nonce,
-		groupId: row.group_id,
-		amount: Number(row.amount),
-		currency: row.currency,
-		network: row.network,
-		recipient: row.recipient,
-		memo: row.memo,
+        return {
+                id: Number(row.id),
+                paymentId: row.payment_id,
+                nonce: row.nonce,
+                groupId: row.group_id !== null && row.group_id !== undefined ? Number(row.group_id) : null,
+                amount: Number(row.amount),
+                currency: row.currency,
+                network: row.network,
+                recipient: row.recipient,
+                memo: row.memo,
 		instructions: row.instructions,
 		resource: row.resource,
 		description: row.description,
 		assetAddress: row.asset_address,
 		assetType: row.asset_type,
 		checkoutUrl: row.checkout_url,
-		facilitatorUrl: row.facilitator_url,
-		status: row.status as PaymentRequestStatus,
-		expiresAt: row.expires_at,
-		lastSignature: row.last_signature,
-		lastPayerAddress: row.last_payer_address,
-		createdAt: row.created_at,
-		updatedAt: row.updated_at
-	};
+                facilitatorUrl: row.facilitator_url,
+                status: row.status as PaymentRequestStatus,
+                expiresAt: row.expires_at,
+                lastSignature: row.last_signature,
+                lastPayerAddress: row.last_payer_address,
+                createdAt: row.created_at,
+                updatedAt: row.updated_at
+        };
 }
 
 function mapPendingPaymentRow(row: PendingPaymentRow): PendingPaymentRecord {
-	return {
-		id: row.id,
-		requestId: row.request_id,
-		signature: row.signature,
-		wireTransaction: row.wire_transaction,
-		payerAddress: row.payer_address,
-		status: row.status as PendingPaymentStatus,
-		error: row.error,
-		createdAt: row.created_at,
-		updatedAt: row.updated_at
-	};
+        return {
+                id: Number(row.id),
+                requestId: Number(row.request_id),
+                signature: row.signature,
+                wireTransaction: row.wire_transaction,
+                payerAddress: row.payer_address,
+                status: row.status as PendingPaymentStatus,
+                error: row.error,
+                createdAt: row.created_at,
+                updatedAt: row.updated_at
+        };
 }
 
 function mapMessageRequestRow(row: MessageRequestRow): MessageRequest {
-	return {
-		id: row.id,
-		paymentRequestId: row.payment_request_id,
-		groupId: row.group_id,
-		walletAddress: row.wallet_address,
-		senderName: row.sender_name,
-		message: row.message,
-		status: row.status as MessageRequestStatus,
-		lastError: row.last_error,
-		telegramMessageId: row.telegram_message_id,
-		telegramChatId: row.telegram_chat_id,
-		sentAt: row.sent_at,
-		createdAt: row.created_at,
-		updatedAt: row.updated_at
-	};
+        return {
+                id: Number(row.id),
+                paymentRequestId: Number(row.payment_request_id),
+                groupId: Number(row.group_id),
+                walletAddress: row.wallet_address,
+                senderName: row.sender_name,
+                message: row.message,
+                status: row.status as MessageRequestStatus,
+                lastError: row.last_error,
+                telegramMessageId:
+                        row.telegram_message_id !== null && row.telegram_message_id !== undefined
+                                ? Number(row.telegram_message_id)
+                                : null,
+                telegramChatId: row.telegram_chat_id,
+                sentAt: row.sent_at,
+                createdAt: row.created_at,
+                updatedAt: row.updated_at
+        };
 }
 
 function mapMessageJoinRow(row: MessageJoinRow): MessagePaymentHistoryEntry {
-	const request: PaymentRequestRecord = {
-		id: row.request_id,
-		paymentId: row.payment_id,
-		nonce: row.nonce,
-		groupId: row.group_id,
-		amount: Number(row.amount),
-		currency: row.currency,
-		network: row.network,
-		recipient: row.recipient,
-		memo: row.memo,
+        const request: PaymentRequestRecord = {
+                id: Number(row.request_id),
+                paymentId: row.payment_id,
+                nonce: row.nonce,
+                groupId: row.group_id !== null && row.group_id !== undefined ? Number(row.group_id) : null,
+                amount: Number(row.amount),
+                currency: row.currency,
+                network: row.network,
+                recipient: row.recipient,
+                memo: row.memo,
 		instructions: row.instructions,
 		resource: row.resource,
 		description: row.description,
 		assetAddress: row.asset_address,
 		assetType: row.asset_type,
 		checkoutUrl: row.checkout_url,
-		facilitatorUrl: row.facilitator_url,
-		status: row.request_status as PaymentRequestStatus,
-		expiresAt: row.expires_at,
-		lastSignature: row.last_signature,
-		lastPayerAddress: row.last_payer_address,
-		createdAt: row.request_created_at,
-		updatedAt: row.request_updated_at
-	};
+                facilitatorUrl: row.facilitator_url,
+                status: row.request_status as PaymentRequestStatus,
+                expiresAt: row.expires_at,
+                lastSignature: row.last_signature,
+                lastPayerAddress: row.last_payer_address,
+                createdAt: row.request_created_at,
+                updatedAt: row.request_updated_at
+        };
 
-	const pending: PendingPaymentRecord | null = row.pending_id
-		? {
-				id: row.pending_id,
-				requestId: row.request_id,
-				signature: row.pending_signature,
-				wireTransaction: row.pending_wire_transaction,
-				payerAddress: row.pending_payer_address,
-				status: (row.pending_status as PendingPaymentStatus) ?? 'pending',
-				error: row.pending_error,
+        const pending: PendingPaymentRecord | null = row.pending_id
+                ? {
+                                id: Number(row.pending_id),
+                                requestId: Number(row.request_id),
+                                signature: row.pending_signature,
+                                wireTransaction: row.pending_wire_transaction,
+                                payerAddress: row.pending_payer_address,
+                                status: (row.pending_status as PendingPaymentStatus) ?? 'pending',
+                                error: row.pending_error,
 				createdAt: row.pending_created_at ?? request.updatedAt,
 				updatedAt: row.pending_updated_at ?? request.updatedAt
 			}
 		: null;
 
-	const message: MessageRequest | null = row.message_id
-		? {
-				id: row.message_id,
-				paymentRequestId: row.request_id,
-				groupId: row.message_group_id ?? row.group_id ?? 0,
-				walletAddress: row.message_wallet_address ?? row.last_payer_address ?? '',
-				senderName: row.message_sender_name,
-				message: row.message_text ?? '',
-				status: (row.message_status as MessageRequestStatus) ?? 'awaiting_payment',
-				lastError: row.message_last_error ?? null,
-				telegramMessageId: row.message_telegram_message_id ?? null,
-				telegramChatId: row.message_telegram_chat_id ?? null,
-				sentAt: row.message_sent_at ?? null,
-				createdAt: row.message_created_at ?? request.createdAt,
-				updatedAt: row.message_updated_at ?? request.updatedAt
-			}
-		: null;
+        const message: MessageRequest | null = row.message_id
+                ? {
+                                id: Number(row.message_id),
+                                paymentRequestId: Number(row.request_id),
+                                groupId: Number(row.message_group_id ?? row.group_id ?? 0),
+                                walletAddress: row.message_wallet_address ?? row.last_payer_address ?? '',
+                                senderName: row.message_sender_name,
+                                message: row.message_text ?? '',
+                                status: (row.message_status as MessageRequestStatus) ?? 'awaiting_payment',
+                                lastError: row.message_last_error ?? null,
+                                telegramMessageId:
+                                        row.message_telegram_message_id !== null &&
+                                        row.message_telegram_message_id !== undefined
+                                                ? Number(row.message_telegram_message_id)
+                                                : null,
+                                telegramChatId: row.message_telegram_chat_id ?? null,
+                                sentAt: row.message_sent_at ?? null,
+                                createdAt: row.message_created_at ?? request.createdAt,
+                                updatedAt: row.message_updated_at ?? request.updatedAt
+                        }
+                : null;
 
-	const groupId = row.group_id ?? row.message_group_id ?? null;
+        const groupId =
+                row.group_id !== null && row.group_id !== undefined
+                        ? Number(row.group_id)
+                        : row.message_group_id !== null && row.message_group_id !== undefined
+                                ? Number(row.message_group_id)
+                                : null;
 
-	const group: Group | null = groupId
-		? {
-				id: groupId,
-				name: row.group_name ?? '',
-				category: row.group_category,
-				telegramId: row.group_telegram_id ?? '',
-				minBid: Number(row.group_min_bid ?? request.amount),
-				ownerAddress: row.group_owner_address ?? request.recipient,
-				active: row.group_active === 1,
-				totalEarned: Number(row.group_total_earned ?? 0),
-				messageCount: Number(row.group_message_count ?? 0),
-				createdAt: row.group_created_at ?? request.createdAt
-			}
-		: null;
+        const group: Group | null = groupId
+                ? {
+                                id: groupId,
+                                name: row.group_name ?? '',
+                                category: row.group_category,
+                                telegramId: row.group_telegram_id ?? '',
+                                minBid: Number(row.group_min_bid ?? request.amount),
+                                ownerAddress: row.group_owner_address ?? request.recipient,
+                                active: Boolean(Number(row.group_active ?? 0)),
+                                totalEarned: Number(row.group_total_earned ?? 0),
+                                messageCount: Number(row.group_message_count ?? 0),
+                                createdAt: row.group_created_at ?? request.createdAt
+                        }
+                : null;
 
 	return { request, pending, message, group };
 }
