@@ -1,9 +1,13 @@
 import type { PaymentDetails } from '$lib/types';
-import { createSolanaRpc } from '@solana/kit';
-import { getTransactionDecoder } from '@solana/transactions';
-import * as ed25519 from '@noble/ed25519';
+import {
+	createSolanaRpc,
+	getBase64Decoder,
+	getTransactionDecoder,
+	signature as toSignature
+} from '@solana/kit';
+import { address as toAddress, getPublicKeyFromAddress } from '@solana/addresses';
+import { signatureBytes, verifySignature } from '@solana/keys';
 import bs58 from 'bs58';
-import { Buffer } from 'buffer';
 
 interface RpcTokenAmount {
 	amount: string;
@@ -90,27 +94,38 @@ export async function verifyWireTransactionSignature(
 	options: VerifyWireTransactionSignatureOptions
 ): Promise<VerifiedWireTransactionSignature | null> {
 	try {
-		const wireBytes = Buffer.from(options.wireTransaction, 'base64');
-		const decoder = getTransactionDecoder();
-		const decoded = decoder.decode(wireBytes);
+		const base64Decoder = getBase64Decoder();
+		const wireBytes = base64Decoder.decode(
+			options.wireTransaction as unknown as Parameters<typeof base64Decoder.decode>[0]
+		);
+		const transactionDecoder = getTransactionDecoder();
+		const decoded = transactionDecoder.decode(
+			wireBytes as unknown as Parameters<typeof transactionDecoder.decode>[0]
+		);
 		const messageBytes = Uint8Array.from(decoded.messageBytes);
 		const signers: string[] = [];
 		let matchedSignature: string | null = null;
 
-		for (const [address, signatureBytes] of Object.entries(decoded.signatures)) {
-			if (!signatureBytes) {
+		for (const [signerAddress, encodedSignature] of Object.entries(decoded.signatures)) {
+			if (!encodedSignature) {
 				continue;
 			}
 
-			const signatureBase58 = bs58.encode(signatureBytes);
-			const publicKeyBytes = bs58.decode(address);
-			const isValid = await ed25519.verify(signatureBytes, messageBytes, publicKeyBytes);
+			const signatureBuffer = signatureBytes(
+				encodedSignature instanceof Uint8Array
+					? encodedSignature
+					: Uint8Array.from(encodedSignature)
+			);
+			const publicKey = await getPublicKeyFromAddress(toAddress(signerAddress));
+			const isValid = await verifySignature(publicKey, signatureBuffer, messageBytes);
 
 			if (!isValid) {
 				return null;
 			}
 
-			signers.push(address);
+			signers.push(signerAddress);
+
+			const signatureBase58 = bs58.encode(signatureBuffer);
 
 			if (!matchedSignature) {
 				matchedSignature = signatureBase58;
@@ -281,21 +296,38 @@ async function fetchTransaction(
 	rpcUrl: string,
 	commitment: 'processed' | 'confirmed' | 'finalized'
 ): Promise<RpcGetTransactionResult | null> {
-	try {
-		const rpc = createSolanaRpc(rpcUrl);
-		const result = await rpc
-			.getTransaction(signature, {
-				commitment,
-				encoding: 'jsonParsed',
-				maxSupportedTransactionVersion: 0
-			})
-			.send();
+        try {
+                const rpc = createSolanaRpc(rpcUrl);
+                const rpcSignature = toSignature(signature);
+                const result = await rpc
+                        .getTransaction(rpcSignature, {
+                                commitment,
+                                encoding: 'jsonParsed',
+                                maxSupportedTransactionVersion: 0
+                        })
+                        .send();
 
-		return result ?? null;
-	} catch (error) {
-		console.warn('Failed to fetch Solana transaction', error);
-		return null;
-	}
+                if (!result) {
+                        return null;
+                }
+
+                const blockTime =
+                        result.blockTime === null
+                                ? null
+                                : typeof result.blockTime === 'bigint'
+                                        ? Number(result.blockTime)
+                                        : result.blockTime;
+
+                return {
+                        blockTime,
+                        slot: typeof result.slot === 'bigint' ? Number(result.slot) : result.slot,
+                        meta: result.meta as unknown as RpcTransactionMeta | null,
+                        transaction: result.transaction as unknown as RpcTransaction
+                } satisfies RpcGetTransactionResult;
+        } catch (error) {
+                console.warn('Failed to fetch Solana transaction', error);
+                return null;
+        }
 }
 
 export async function verifySolanaPayment(
