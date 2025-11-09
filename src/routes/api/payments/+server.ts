@@ -11,6 +11,7 @@ import {
 interface SubmitPaymentPayload {
   paymentId?: string;
   wireTransaction?: string;
+  signature?: string;
   payer?: string | null;
 }
 
@@ -116,10 +117,11 @@ export const POST: RequestHandler = async ({ request, platform }) => {
     const payload = (await request.json()) as SubmitPaymentPayload;
     const paymentId = typeof payload.paymentId === 'string' ? payload.paymentId.trim() : '';
     const wireTransaction = typeof payload.wireTransaction === 'string' ? payload.wireTransaction.trim() : '';
+    const submittedSignature = typeof payload.signature === 'string' ? payload.signature.trim() : '';
     const payer = typeof payload.payer === 'string' ? payload.payer.trim() : null;
 
-    if (!paymentId || !wireTransaction) {
-      return json({ error: 'paymentId and wireTransaction are required' }, { status: 400 });
+    if (!paymentId || (!wireTransaction && !submittedSignature)) {
+      return json({ error: 'paymentId and a transaction payload are required' }, { status: 400 });
     }
 
     const repo = new AuctionRepository(env.DB);
@@ -135,26 +137,105 @@ export const POST: RequestHandler = async ({ request, platform }) => {
       return json({ error: 'Payment request has expired' }, { status: 410 });
     }
 
-    const verification = await verifyWireTransactionSignature({
-      wireTransaction,
-      expectedSigner: payer ?? undefined
-    });
+    let signature = submittedSignature;
+    let verification: Awaited<ReturnType<typeof verifyWireTransactionSignature>> | null = null;
 
-    if (!verification || !verification.signature) {
-      return json({ error: 'Unable to verify the submitted transaction signature' }, { status: 400 });
+    if (wireTransaction) {
+      verification = await verifyWireTransactionSignature({
+        wireTransaction,
+        expectedSignature: submittedSignature || undefined,
+        expectedSigner: payer ?? undefined
+      });
+
+      if (!verification || !verification.signature) {
+        return json({ error: 'Unable to verify the submitted transaction signature' }, { status: 400 });
+      }
+
+      if (payer && !verification.signers.includes(payer)) {
+        return json({ error: 'Submitted transaction is not signed by the expected payer' }, { status: 400 });
+      }
+
+      signature = verification.signature;
+    } else if (!signature) {
+      return json({ error: 'A transaction signature is required' }, { status: 400 });
     }
 
-    if (payer && !verification.signers.includes(payer)) {
-      return json({ error: 'Submitted transaction is not signed by the expected payer' }, { status: 400 });
-    }
-
-    const signature = verification.signature;
     const existing = signature ? await repo.getPendingPaymentBySignature(signature) : null;
     if (existing && existing.requestId !== requestRecord.id) {
       return json({ error: 'Transaction signature already submitted for another payment' }, { status: 409 });
     }
 
     const rpcUrl = env.SOLANA_RPC_URL ?? DEFAULT_SOLANA_RPC_URL;
+
+    if (!wireTransaction) {
+      const pendingRecord = existing
+        ? await repo.updatePendingPayment(existing.id, {
+            status: 'submitted',
+            error: null,
+            wireTransaction: null,
+            signature,
+            payerAddress: payer ?? existing.payerAddress ?? null
+          })
+        : await repo.createPendingPayment({
+            requestId: requestRecord.id,
+            signature,
+            wireTransaction: null,
+            payerAddress: payer ?? null,
+            status: 'submitted'
+          });
+
+      if (!pendingRecord) {
+        throw new Error('Failed to persist pending payment record');
+      }
+
+      const updatedRequest = await repo.updatePaymentRequestStatus(requestRecord.id, {
+        status: 'submitted',
+        lastSignature: signature,
+        lastPayerAddress: pendingRecord.payerAddress ?? null
+      });
+
+      const commitment = normalizeCommitment(env.SOLANA_COMMITMENT);
+      const tokenMintAddress = env.SOLANA_USDC_MINT_ADDRESS ?? null;
+
+      const chainVerification = await verifySolanaPayment({
+        signature,
+        rpcUrl,
+        recipient: requestRecord.recipient,
+        minAmount: requestRecord.amount,
+        expectedCurrency: requestRecord.currency,
+        tokenMintAddress,
+        commitment
+      });
+
+      if (chainVerification) {
+        const confirmedPending = await repo.updatePendingPayment(pendingRecord.id, {
+          status: 'confirmed',
+          error: null,
+          payerAddress: chainVerification.sender
+        });
+        const confirmedRequest = await repo.updatePaymentRequestStatus(requestRecord.id, {
+          status: 'confirmed',
+          lastSignature: chainVerification.txHash,
+          lastPayerAddress: chainVerification.sender
+        });
+
+        return json({
+          payment: {
+            request: confirmedRequest ?? updatedRequest ?? requestRecord,
+            pending: confirmedPending ?? pendingRecord,
+            verification: chainVerification
+          }
+        });
+      }
+
+      return json({
+        payment: {
+          request: updatedRequest ?? requestRecord,
+          pending: pendingRecord,
+          verification: null
+        }
+      });
+    }
 
     const rpcResponse = await fetch(rpcUrl, {
       method: 'POST',
@@ -178,13 +259,13 @@ export const POST: RequestHandler = async ({ request, platform }) => {
             status: 'failed',
             error: rpcPayload.error?.message ?? rpcResponse.statusText,
             wireTransaction,
-            payerAddress: payer ?? verification.signers[0] ?? null
+            payerAddress: payer ?? verification?.signers?.[0] ?? null
           })
         : await repo.createPendingPayment({
             requestId: requestRecord.id,
             signature,
             wireTransaction,
-            payerAddress: payer ?? verification.signers[0] ?? null,
+            payerAddress: payer ?? verification?.signers?.[0] ?? null,
             status: 'failed',
             error: rpcPayload.error?.message ?? rpcResponse.statusText
           });
@@ -218,14 +299,14 @@ export const POST: RequestHandler = async ({ request, platform }) => {
           status: 'submitted',
           error: null,
           wireTransaction,
-          payerAddress: payer ?? verification.signers[0] ?? null,
+          payerAddress: payer ?? verification?.signers[0] ?? null,
           signature
         })
       : await repo.createPendingPayment({
           requestId: requestRecord.id,
           signature,
           wireTransaction,
-          payerAddress: payer ?? verification.signers[0] ?? null,
+          payerAddress: payer ?? verification?.signers[0] ?? null,
           status: 'submitted'
         });
 
