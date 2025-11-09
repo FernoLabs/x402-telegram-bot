@@ -236,7 +236,7 @@
 			throw new Error('Payment request is missing a recipient address.');
 		}
 
-		const rpcEndpoint = walletState.rpcEndpoint ?? PUBLIC_SOLANA_RPC_ENDPOINT;
+		const rpcEndpoint = PUBLIC_SOLANA_RPC_ENDPOINT;
 		const rpc = createSolanaRpc(rpcEndpoint);
 		const payerAddress = address(walletAddress as Address);
 		const payerSigner = createNoopSigner(payerAddress);
