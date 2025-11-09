@@ -7,7 +7,9 @@
 	"name": "x402-tg-auction-bot",
 	"main": ".svelte-kit/cloudflare/_worker.js",
 	"compatibility_date": "2025-11-07",
-	"compatibility_flags": ["nodejs_als"],
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
 	"assets": {
 		"binding": "ASSETS",
 		"directory": ".svelte-kit/cloudflare"
@@ -19,12 +21,13 @@
 		{
 			"binding": "DB",
 			"database_name": "x402-auction-db",
-			"database_id": "c7203407-91b0-4830-8079-394f5d8e436e"
+			"database_id": "c7203407-91b0-4830-8079-394f5d8e436e",
+			"remote" : true
 		}
 	],
 	"vars": {
 		"TELEGRAM_WEBHOOK_URL": "https://x402-tg-auction-bot.cheron-augustin.workers.dev/api/telegram/webhook",
-		"SOLANA_RPC_URL": "https://api.mainnet-beta.solana.com",
+		"SOLANA_RPC_URL": "https://jenifer-6iwpyb-fast-mainnet.helius-rpc.com",
 		"SOLANA_USDC_MINT_ADDRESS": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
 		"SOLANA_COMMITMENT": "confirmed"
 	}
