@@ -1,55 +1,62 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { onMount } from 'svelte';
 	import type { Group } from '$lib/types';
 	import { wallet } from '$lib/wallet/wallet.svelte';
 
-	export let data: {
-		groups: Group[];
-		loadError: boolean;
-		preselectedGroupId: number | null;
-	};
-
-	$: activeGroups = data.groups.filter((group) => group.active);
-
-	function resolveDefaultGroupId(): string {
-		if (
-			data.preselectedGroupId &&
-			activeGroups.some((group) => group.id === data.preselectedGroupId)
-		) {
-			return String(data.preselectedGroupId);
-		}
-
-		if (activeGroups.length > 0) {
-			return String(activeGroups[0].id);
-		}
-
-		return '';
+	interface Props {
+		data: {
+			groups: Group[];
+			loadError: boolean;
+			preselectedGroupId: number | null;
+		};
 	}
 
-	$: defaultGroupId = resolveDefaultGroupId();
+	let { data }: Props = $props();
 
-	let selectedGroupId = '';
-	onMount(() => {
-		selectedGroupId = resolveDefaultGroupId();
+	// Derived state - automatically updates when data.groups changes
+	let activeGroups = $derived(data.groups.filter((group) => group.active));
+
+	// Form state
+	let selectedGroupId = $state('');
+	let senderName = $state('');
+	let message = $state('');
+	let submitting = $state(false);
+	let error = $state<string | null>(null);
+	let successPaymentId = $state<string | null>(null);
+
+	// Wallet state - derived from the wallet store
+	let walletState = $derived($wallet);
+	let connected = $derived(walletState.connected);
+	let walletAddress = $derived(walletState.publicKey);
+
+	// Derived validation state
+	let canSubmit = $derived(Boolean(selectedGroupId && message.trim() && !submitting));
+
+	// Initialize selectedGroupId when activeGroups is available
+	$effect(() => {
+		if (activeGroups.length > 0 && !selectedGroupId) {
+			// Use preselected group if available and valid
+			if (
+				data.preselectedGroupId &&
+				activeGroups.some((g) => g.id === data.preselectedGroupId)
+			) {
+				selectedGroupId = String(data.preselectedGroupId);
+			} else {
+				// Default to first active group
+				selectedGroupId = String(activeGroups[0].id);
+			}
+		}
 	});
-	$: {
-		const hasSelection = activeGroups.some((group) => String(group.id) === selectedGroupId);
-		if (!hasSelection && defaultGroupId) {
-			selectedGroupId = defaultGroupId;
+
+	// Validate selectedGroupId when activeGroups changes
+	$effect(() => {
+		if (selectedGroupId && activeGroups.length > 0) {
+			const isValid = activeGroups.some((g) => String(g.id) === selectedGroupId);
+			if (!isValid) {
+				selectedGroupId = activeGroups.length > 0 ? String(activeGroups[0].id) : '';
+			}
 		}
-	}
-	let senderName = '';
-	let message = '';
-	let submitting = false;
-	let error: string | null = null;
-	let successPaymentId: string | null = null;
-
-	$: walletState = $wallet;
-	$: connected = walletState.connected;
-	$: walletAddress = walletState.publicKey;
-
-	const canSubmit = () => Boolean(selectedGroupId && message.trim());
+	});
 
 	interface CreateMessageResponse {
 		payment?: { paymentId?: string };
@@ -62,7 +69,7 @@
 		error = null;
 		successPaymentId = null;
 
-		if (!canSubmit()) {
+		if (!canSubmit) {
 			error = 'Select a group and write a message first.';
 			return;
 		}
@@ -106,13 +113,10 @@
 	}
 
 	function viewPayments() {
-		if (!successPaymentId) {
-			goto('/payments');
-			return;
-		}
-
 		const url = new URL('/payments', window.location.origin);
-		url.searchParams.set('paymentId', successPaymentId);
+		if (successPaymentId) {
+			url.searchParams.set('paymentId', successPaymentId);
+		}
 		goto(url.pathname + url.search);
 	}
 </script>
@@ -139,12 +143,14 @@
 	{:else if activeGroups.length === 0}
 		<p class="error">No active Telegram groups are accepting paid messages at the moment.</p>
 	{:else}
-		<form on:submit={handleSubmit} class="message-form">
+		<form onsubmit={handleSubmit} class="message-form">
 			<label>
 				<span>Target group</span>
 				<select bind:value={selectedGroupId} required>
-					{#each activeGroups as group}
-						<option value={group.id}>{group.name} — minimum ${group.minBid.toFixed(2)} USDC</option>
+					{#each activeGroups as group (group.id)}
+						<option value={String(group.id)}>
+							{group.name} — minimum ${group.minBid.toFixed(2)} USDC
+						</option>
 					{/each}
 				</select>
 			</label>
@@ -178,12 +184,12 @@
 				<div class="success" role="status">
 					<p>
 						Message saved! Complete the payment from the
-						<button type="button" class="link" on:click={viewPayments}>payments page</button>.
+						<button type="button" class="link" onclick={viewPayments}>payments page</button>.
 					</p>
 				</div>
 			{/if}
 
-			<button type="submit" class="primary" disabled={!canSubmit() || submitting}>
+			<button type="submit" class="primary" disabled={!canSubmit}>
 				{#if submitting}
 					Creating payment request…
 				{:else}
