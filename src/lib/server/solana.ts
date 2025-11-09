@@ -1,167 +1,148 @@
 import type { PaymentDetails } from '$lib/types';
+import { createSolanaRpc } from '@solana/kit';
 import { getTransactionDecoder } from '@solana/transactions';
 import * as ed25519 from '@noble/ed25519';
 import bs58 from 'bs58';
 import { Buffer } from 'buffer';
 
-interface JsonRpcRequest {
-  jsonrpc: '2.0';
-  id: string;
-  method: string;
-  params: unknown[];
-}
-
-interface JsonRpcError {
-  code: number;
-  message: string;
-  data?: unknown;
-}
-
-interface JsonRpcResponse<T> {
-  jsonrpc: '2.0';
-  id: string;
-  result?: T;
-  error?: JsonRpcError;
-}
-
 interface RpcTokenAmount {
-  amount: string;
-  decimals: number;
-  uiAmount: number | null;
-  uiAmountString?: string;
+	amount: string;
+	decimals: number;
+	uiAmount: number | null;
+	uiAmountString?: string;
 }
 
 interface RpcTokenBalance {
-  accountIndex: number;
-  mint: string;
-  owner?: string;
-  uiTokenAmount: RpcTokenAmount;
+	accountIndex: number;
+	mint: string;
+	owner?: string;
+	uiTokenAmount: RpcTokenAmount;
 }
 
 interface RpcAccountKey {
-  pubkey: string;
-  signer: boolean;
-  writable: boolean;
+	pubkey: string;
+	signer: boolean;
+	writable: boolean;
 }
 
 interface RpcInstruction {
-  program: string;
-  programId: string;
-  accounts?: string[];
-  parsed?: { type: string; info: Record<string, unknown> };
+	program: string;
+	programId: string;
+	accounts?: string[];
+	parsed?: { type: string; info: Record<string, unknown> };
 }
 
 interface RpcTransactionMessage {
-  accountKeys: RpcAccountKey[];
-  instructions: RpcInstruction[];
+	accountKeys: RpcAccountKey[];
+	instructions: RpcInstruction[];
 }
 
 interface RpcTransaction {
-  message: RpcTransactionMessage;
-  signatures: string[];
+	message: RpcTransactionMessage;
+	signatures: string[];
 }
 
 interface RpcTransactionMeta {
-  err: unknown | null;
-  status?: { Ok: unknown } | { Err: unknown };
-  preBalances: number[];
-  postBalances: number[];
-  preTokenBalances?: RpcTokenBalance[];
-  postTokenBalances?: RpcTokenBalance[];
+	err: unknown | null;
+	status?: { Ok: unknown } | { Err: unknown };
+	preBalances: number[];
+	postBalances: number[];
+	preTokenBalances?: RpcTokenBalance[];
+	postTokenBalances?: RpcTokenBalance[];
 }
 
 interface RpcGetTransactionResult {
-  slot: number;
-  meta: RpcTransactionMeta | null;
-  transaction: RpcTransaction;
-  blockTime: number | null;
+	slot: number;
+	meta: RpcTransactionMeta | null;
+	transaction: RpcTransaction;
+	blockTime: number | null;
 }
 
 export type SolanaCommitment = 'processed' | 'confirmed' | 'finalized';
 
 interface VerifySolanaPaymentOptions {
-  signature: string;
-  rpcUrl?: string;
-  recipient: string;
-  minAmount: number;
-  expectedCurrency?: string | null;
-  tokenMintAddress?: string | null;
-  commitment?: SolanaCommitment;
+	signature: string;
+	rpcUrl?: string;
+	recipient: string;
+	minAmount: number;
+	expectedCurrency?: string | null;
+	tokenMintAddress?: string | null;
+	commitment?: SolanaCommitment;
 }
 
 interface VerifiedPaymentDetails extends PaymentDetails {
-  slot: number;
-  blockTime: number | null;
+	slot: number;
+	blockTime: number | null;
 }
 
 interface VerifyWireTransactionSignatureOptions {
-  wireTransaction: string;
-  expectedSignature?: string | null;
-  expectedSigner?: string | null;
+	wireTransaction: string;
+	expectedSignature?: string | null;
+	expectedSigner?: string | null;
 }
 
 export interface VerifiedWireTransactionSignature {
-  signers: string[];
-  signature: string | null;
+	signers: string[];
+	signature: string | null;
 }
 
 export async function verifyWireTransactionSignature(
-  options: VerifyWireTransactionSignatureOptions
+	options: VerifyWireTransactionSignatureOptions
 ): Promise<VerifiedWireTransactionSignature | null> {
-  try {
-    const wireBytes = Buffer.from(options.wireTransaction, 'base64');
-    const decoder = getTransactionDecoder();
-    const decoded = decoder.decode(wireBytes);
-    const messageBytes = Uint8Array.from(decoded.messageBytes);
-    const signers: string[] = [];
-    let matchedSignature: string | null = null;
+	try {
+		const wireBytes = Buffer.from(options.wireTransaction, 'base64');
+		const decoder = getTransactionDecoder();
+		const decoded = decoder.decode(wireBytes);
+		const messageBytes = Uint8Array.from(decoded.messageBytes);
+		const signers: string[] = [];
+		let matchedSignature: string | null = null;
 
-    for (const [address, signatureBytes] of Object.entries(decoded.signatures)) {
-      if (!signatureBytes) {
-        continue;
-      }
+		for (const [address, signatureBytes] of Object.entries(decoded.signatures)) {
+			if (!signatureBytes) {
+				continue;
+			}
 
-      const signatureBase58 = bs58.encode(signatureBytes);
-      const publicKeyBytes = bs58.decode(address);
-      const isValid = await ed25519.verify(signatureBytes, messageBytes, publicKeyBytes);
+			const signatureBase58 = bs58.encode(signatureBytes);
+			const publicKeyBytes = bs58.decode(address);
+			const isValid = await ed25519.verify(signatureBytes, messageBytes, publicKeyBytes);
 
-      if (!isValid) {
-        return null;
-      }
+			if (!isValid) {
+				return null;
+			}
 
-      signers.push(address);
+			signers.push(address);
 
-      if (!matchedSignature) {
-        matchedSignature = signatureBase58;
-      }
+			if (!matchedSignature) {
+				matchedSignature = signatureBase58;
+			}
 
-      if (options.expectedSignature && signatureBase58 !== options.expectedSignature) {
-        continue;
-      }
+			if (options.expectedSignature && signatureBase58 !== options.expectedSignature) {
+				continue;
+			}
 
-      matchedSignature = signatureBase58;
-    }
+			matchedSignature = signatureBase58;
+		}
 
-    if (signers.length === 0) {
-      return null;
-    }
+		if (signers.length === 0) {
+			return null;
+		}
 
-    if (options.expectedSigner && !signers.includes(options.expectedSigner)) {
-      return null;
-    }
+		if (options.expectedSigner && !signers.includes(options.expectedSigner)) {
+			return null;
+		}
 
-    if (options.expectedSignature && matchedSignature !== options.expectedSignature) {
-      return null;
-    }
+		if (options.expectedSignature && matchedSignature !== options.expectedSignature) {
+			return null;
+		}
 
-    return {
-      signers,
-      signature: matchedSignature
-    };
-  } catch (error) {
-    console.warn('Failed to verify provided Solana transaction', error);
-    return null;
-  }
+		return {
+			signers,
+			signature: matchedSignature
+		};
+	} catch (error) {
+		console.warn('Failed to verify provided Solana transaction', error);
+		return null;
+	}
 }
 
 export const DEFAULT_SOLANA_RPC_URL = 'https://api.mainnet-beta.solana.com';
@@ -170,227 +151,222 @@ const LAMPORTS_PER_SOL = 1_000_000_000;
 const EPSILON = 1e-7;
 
 export function normalizeCommitment(value: string | null | undefined): SolanaCommitment {
-  if (value === 'processed' || value === 'finalized') {
-    return value;
-  }
-  return 'confirmed';
-}
-
-function buildRpcRequest(method: string, params: unknown[]): JsonRpcRequest {
-  const id = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random()}`;
-  return {
-    jsonrpc: '2.0',
-    id,
-    method,
-    params
-  };
+	if (value === 'processed' || value === 'finalized') {
+		return value;
+	}
+	return 'confirmed';
 }
 
 function parseUiTokenAmount(amount: RpcTokenAmount | undefined): number {
-  if (!amount) {
-    return 0;
-  }
+	if (!amount) {
+		return 0;
+	}
 
-  if (typeof amount.uiAmount === 'number' && Number.isFinite(amount.uiAmount)) {
-    return amount.uiAmount;
-  }
+	if (typeof amount.uiAmount === 'number' && Number.isFinite(amount.uiAmount)) {
+		return amount.uiAmount;
+	}
 
-  if (typeof amount.uiAmountString === 'string' && amount.uiAmountString.trim()) {
-    const parsed = Number.parseFloat(amount.uiAmountString);
-    if (!Number.isNaN(parsed)) {
-      return parsed;
-    }
-  }
+	if (typeof amount.uiAmountString === 'string' && amount.uiAmountString.trim()) {
+		const parsed = Number.parseFloat(amount.uiAmountString);
+		if (!Number.isNaN(parsed)) {
+			return parsed;
+		}
+	}
 
-  const raw = Number.parseFloat(amount.amount ?? '0');
-  const decimals = typeof amount.decimals === 'number' ? amount.decimals : 0;
-  if (Number.isNaN(raw) || decimals < 0) {
-    return 0;
-  }
+	const raw = Number.parseFloat(amount.amount ?? '0');
+	const decimals = typeof amount.decimals === 'number' ? amount.decimals : 0;
+	if (Number.isNaN(raw) || decimals < 0) {
+		return 0;
+	}
 
-  return raw / Math.pow(10, decimals);
+	return raw / Math.pow(10, decimals);
 }
 
 function accumulateTokenDeltas(
-  preBalances: RpcTokenBalance[] | undefined,
-  postBalances: RpcTokenBalance[] | undefined,
-  accountKeys: RpcAccountKey[]
+	preBalances: RpcTokenBalance[] | undefined,
+	postBalances: RpcTokenBalance[] | undefined,
+	accountKeys: RpcAccountKey[]
 ): Map<string, number> {
-  const deltas = new Map<string, number>();
-  const preByIndex = new Map<number, RpcTokenBalance>();
-  const postByIndex = new Map<number, RpcTokenBalance>();
+	const deltas = new Map<string, number>();
+	const preByIndex = new Map<number, RpcTokenBalance>();
+	const postByIndex = new Map<number, RpcTokenBalance>();
 
-  for (const balance of preBalances ?? []) {
-    preByIndex.set(balance.accountIndex, balance);
-  }
+	for (const balance of preBalances ?? []) {
+		preByIndex.set(balance.accountIndex, balance);
+	}
 
-  for (const balance of postBalances ?? []) {
-    postByIndex.set(balance.accountIndex, balance);
-  }
+	for (const balance of postBalances ?? []) {
+		postByIndex.set(balance.accountIndex, balance);
+	}
 
-  const indices = new Set<number>([
-    ...Array.from(preByIndex.keys()),
-    ...Array.from(postByIndex.keys())
-  ]);
+	const indices = new Set<number>([
+		...Array.from(preByIndex.keys()),
+		...Array.from(postByIndex.keys())
+	]);
 
-  for (const index of indices) {
-    const pre = preByIndex.get(index);
-    const post = postByIndex.get(index);
-    const owner = post?.owner ?? pre?.owner ?? accountKeys[index]?.pubkey ?? null;
-    if (!owner) {
-      continue;
-    }
+	for (const index of indices) {
+		const pre = preByIndex.get(index);
+		const post = postByIndex.get(index);
+		const owner = post?.owner ?? pre?.owner ?? accountKeys[index]?.pubkey ?? null;
+		if (!owner) {
+			continue;
+		}
 
-    const preAmount = parseUiTokenAmount(pre?.uiTokenAmount);
-    const postAmount = parseUiTokenAmount(post?.uiTokenAmount);
-    const delta = postAmount - preAmount;
+		const preAmount = parseUiTokenAmount(pre?.uiTokenAmount);
+		const postAmount = parseUiTokenAmount(post?.uiTokenAmount);
+		const delta = postAmount - preAmount;
 
-    if (Math.abs(delta) > EPSILON) {
-      deltas.set(owner, (deltas.get(owner) ?? 0) + delta);
-    }
-  }
+		if (Math.abs(delta) > EPSILON) {
+			deltas.set(owner, (deltas.get(owner) ?? 0) + delta);
+		}
+	}
 
-  return deltas;
+	return deltas;
 }
 
-function accumulateSolDeltas(meta: RpcTransactionMeta, accountKeys: RpcAccountKey[]): Map<string, number> {
-  const deltas = new Map<string, number>();
-  const { preBalances, postBalances } = meta;
+function accumulateSolDeltas(
+	meta: RpcTransactionMeta,
+	accountKeys: RpcAccountKey[]
+): Map<string, number> {
+	const deltas = new Map<string, number>();
+	const { preBalances, postBalances } = meta;
 
-  for (let i = 0; i < postBalances.length; i += 1) {
-    const post = postBalances[i] ?? 0;
-    const pre = preBalances[i] ?? 0;
-    const changeLamports = post - pre;
-    if (changeLamports === 0) {
-      continue;
-    }
-    const owner = accountKeys[i]?.pubkey;
-    if (!owner) {
-      continue;
-    }
-    const deltaSol = changeLamports / LAMPORTS_PER_SOL;
-    if (Math.abs(deltaSol) > EPSILON) {
-      deltas.set(owner, (deltas.get(owner) ?? 0) + deltaSol);
-    }
-  }
+	for (let i = 0; i < postBalances.length; i += 1) {
+		const post = postBalances[i] ?? 0;
+		const pre = preBalances[i] ?? 0;
+		const changeLamports = post - pre;
+		if (changeLamports === 0) {
+			continue;
+		}
+		const owner = accountKeys[i]?.pubkey;
+		if (!owner) {
+			continue;
+		}
+		const deltaSol = changeLamports / LAMPORTS_PER_SOL;
+		if (Math.abs(deltaSol) > EPSILON) {
+			deltas.set(owner, (deltas.get(owner) ?? 0) + deltaSol);
+		}
+	}
 
-  return deltas;
+	return deltas;
 }
 
 function resolveSender(
-  deltas: Map<string, number>,
-  recipient: string,
-  fallbackSigner: string | null
+	deltas: Map<string, number>,
+	recipient: string,
+	fallbackSigner: string | null
 ): string | null {
-  let sender: string | null = null;
-  let minValue = 0;
+	let sender: string | null = null;
+	let minValue = 0;
 
-  for (const [owner, delta] of deltas.entries()) {
-    if (owner === recipient) {
-      continue;
-    }
-    if (delta < minValue) {
-      minValue = delta;
-      sender = owner;
-    }
-  }
+	for (const [owner, delta] of deltas.entries()) {
+		if (owner === recipient) {
+			continue;
+		}
+		if (delta < minValue) {
+			minValue = delta;
+			sender = owner;
+		}
+	}
 
-  if (sender) {
-    return sender;
-  }
+	if (sender) {
+		return sender;
+	}
 
-  return fallbackSigner;
+	return fallbackSigner;
 }
 
 async function fetchTransaction(
-  signature: string,
-  rpcUrl: string,
-  commitment: 'processed' | 'confirmed' | 'finalized'
+	signature: string,
+	rpcUrl: string,
+	commitment: 'processed' | 'confirmed' | 'finalized'
 ): Promise<RpcGetTransactionResult | null> {
-  const request = buildRpcRequest('getTransaction', [signature, { encoding: 'jsonParsed', commitment }]);
+	try {
+		const rpc = createSolanaRpc(rpcUrl);
+		const result = await rpc
+			.getTransaction(signature, {
+				commitment,
+				encoding: 'jsonParsed',
+				maxSupportedTransactionVersion: 0
+			})
+			.send();
 
-  const response = await fetch(rpcUrl, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(request)
-  });
-
-  if (!response.ok) {
-    console.warn('Failed to fetch Solana transaction', response.status, await response.text());
-    return null;
-  }
-
-  const payload = (await response.json()) as JsonRpcResponse<RpcGetTransactionResult>;
-  if (payload.error) {
-    console.warn('Solana RPC error', payload.error);
-    return null;
-  }
-
-  return payload.result ?? null;
+		return result ?? null;
+	} catch (error) {
+		console.warn('Failed to fetch Solana transaction', error);
+		return null;
+	}
 }
 
-export async function verifySolanaPayment(options: VerifySolanaPaymentOptions): Promise<VerifiedPaymentDetails | null> {
-  const rpcUrl = options.rpcUrl ?? DEFAULT_SOLANA_RPC_URL;
-  const commitment = options.commitment ?? 'confirmed';
-  const result = await fetchTransaction(options.signature, rpcUrl, commitment);
+export async function verifySolanaPayment(
+	options: VerifySolanaPaymentOptions
+): Promise<VerifiedPaymentDetails | null> {
+	const rpcUrl = options.rpcUrl ?? DEFAULT_SOLANA_RPC_URL;
+	const commitment = options.commitment ?? 'confirmed';
+	const result = await fetchTransaction(options.signature, rpcUrl, commitment);
 
-  if (!result?.meta || result.meta.err) {
-    return null;
-  }
+	if (!result?.meta || result.meta.err) {
+		return null;
+	}
 
-  const { transaction, meta } = result;
-  const accountKeys = transaction.message.accountKeys ?? [];
-  const expectedCurrency = options.expectedCurrency ?? 'USDC';
-  const normalizedCurrency = expectedCurrency.toUpperCase();
-  let amountReceived = 0;
-  let sender: string | null = null;
-  let currency = normalizedCurrency;
+	const { transaction, meta } = result;
+	const accountKeys = transaction.message.accountKeys ?? [];
+	const expectedCurrency = options.expectedCurrency ?? 'USDC';
+	const normalizedCurrency = expectedCurrency.toUpperCase();
+	let amountReceived = 0;
+	let sender: string | null = null;
+	let currency = normalizedCurrency;
 
-  if (normalizedCurrency === 'SOL') {
-    const solDeltas = accumulateSolDeltas(meta, accountKeys);
-    const recipientDelta = solDeltas.get(options.recipient) ?? 0;
-    if (recipientDelta + EPSILON < options.minAmount) {
-      return null;
-    }
-    amountReceived = recipientDelta;
-    sender = resolveSender(solDeltas, options.recipient, accountKeys.find((key) => key.signer)?.pubkey ?? null);
-    currency = 'SOL';
-  } else {
-    const mint = options.tokenMintAddress ?? DEFAULT_USDC_MINT;
-    const tokenDeltas = accumulateTokenDeltas(
-      meta.preTokenBalances?.filter((balance) => balance.mint === mint),
-      meta.postTokenBalances?.filter((balance) => balance.mint === mint),
-      accountKeys
-    );
+	if (normalizedCurrency === 'SOL') {
+		const solDeltas = accumulateSolDeltas(meta, accountKeys);
+		const recipientDelta = solDeltas.get(options.recipient) ?? 0;
+		if (recipientDelta + EPSILON < options.minAmount) {
+			return null;
+		}
+		amountReceived = recipientDelta;
+		sender = resolveSender(
+			solDeltas,
+			options.recipient,
+			accountKeys.find((key) => key.signer)?.pubkey ?? null
+		);
+		currency = 'SOL';
+	} else {
+		const mint = options.tokenMintAddress ?? DEFAULT_USDC_MINT;
+		const tokenDeltas = accumulateTokenDeltas(
+			meta.preTokenBalances?.filter((balance) => balance.mint === mint),
+			meta.postTokenBalances?.filter((balance) => balance.mint === mint),
+			accountKeys
+		);
 
-    const recipientDelta = tokenDeltas.get(options.recipient) ?? 0;
-    if (recipientDelta + EPSILON < options.minAmount) {
-      return null;
-    }
+		const recipientDelta = tokenDeltas.get(options.recipient) ?? 0;
+		if (recipientDelta + EPSILON < options.minAmount) {
+			return null;
+		}
 
-    amountReceived = recipientDelta;
-    sender = resolveSender(tokenDeltas, options.recipient, accountKeys.find((key) => key.signer)?.pubkey ?? null);
-    currency = normalizedCurrency;
-  }
+		amountReceived = recipientDelta;
+		sender = resolveSender(
+			tokenDeltas,
+			options.recipient,
+			accountKeys.find((key) => key.signer)?.pubkey ?? null
+		);
+		currency = normalizedCurrency;
+	}
 
-  if (!sender) {
-    sender = accountKeys.find((key) => key.signer)?.pubkey ?? null;
-  }
+	if (!sender) {
+		sender = accountKeys.find((key) => key.signer)?.pubkey ?? null;
+	}
 
-  if (!sender) {
-    return null;
-  }
+	if (!sender) {
+		return null;
+	}
 
-  return {
-    amount: amountReceived,
-    sender,
-    txHash: options.signature,
-    currency,
-    network: 'solana',
-    slot: result.slot,
-    blockTime: result.blockTime
-  };
+	return {
+		amount: amountReceived,
+		sender,
+		txHash: options.signature,
+		currency,
+		network: 'solana',
+		slot: result.slot,
+		blockTime: result.blockTime
+	};
 }
-

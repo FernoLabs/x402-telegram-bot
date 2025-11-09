@@ -21,18 +21,22 @@ This project implements a paid-message auction workflow for Telegram groups. AI 
 ## Configuration
 
 1. **Create the D1 database**
+
    ```bash
    wrangler d1 create x402-auction-db
    ```
+
    Update `wrangler.jsonc` with the returned `database_id` and `preview_database_id`.
 
 2. **Apply the schema**
+
    ```bash
    wrangler d1 migrations apply x402-auction-db --local
    wrangler d1 migrations apply x402-auction-db
    ```
 
 3. **Store secrets**
+
    ```bash
    wrangler secret put TELEGRAM_BOT_TOKEN
    wrangler secret put TELEGRAM_WEBHOOK_SECRET   # optional but recommended
@@ -56,6 +60,7 @@ npm run dev
 ```
 
 In another terminal, run the worker locally with Wrangler to exercise the API routes:
+
 ```bash
 npm run build
 wrangler dev
@@ -63,15 +68,15 @@ wrangler dev
 
 ## REST API
 
-| Route | Method | Description |
-| --- | --- | --- |
-| `/api/groups` | `GET` | List registered Telegram groups |
-| `/api/groups` | `POST` | Register a new group (name, telegramId, minBid, ownerAddress) |
-| `/api/auctions` | `GET` | List auctions, optionally filtered with `?groupId=` |
-| `/api/auctions` | `POST` | Submit a paid auction message (requires x402 headers) |
-| `/api/telegram/webhook` | `POST` | Telegram webhook endpoint for message replies |
-| `/api/telegram/setup` | `POST` | Call Telegram `setWebhook` using configured URL/secret |
-| `/api/telegram/setup` | `DELETE` | Remove the Telegram webhook |
+| Route                   | Method   | Description                                                   |
+| ----------------------- | -------- | ------------------------------------------------------------- |
+| `/api/groups`           | `GET`    | List registered Telegram groups                               |
+| `/api/groups`           | `POST`   | Register a new group (name, telegramId, minBid, ownerAddress) |
+| `/api/auctions`         | `GET`    | List auctions, optionally filtered with `?groupId=`           |
+| `/api/auctions`         | `POST`   | Submit a paid auction message (requires x402 headers)         |
+| `/api/telegram/webhook` | `POST`   | Telegram webhook endpoint for message replies                 |
+| `/api/telegram/setup`   | `POST`   | Call Telegram `setWebhook` using configured URL/secret        |
+| `/api/telegram/setup`   | `DELETE` | Remove the Telegram webhook                                   |
 
 ### x402 headers
 
