@@ -46,12 +46,12 @@ export const POST: RequestHandler = async ({ request, platform }) => {
 			return json({ ok: true });
 		}
 
-		if (message.reply_to_message && message.text) {
-			const chatId = String(message.chat.id);
-			const repliedMessageId = message.reply_to_message.message_id;
-			const auction = await repo.getAuctionByTelegramMessage(repliedMessageId, chatId);
+                if (message.reply_to_message && message.text) {
+                        const chatId = String(message.chat.id);
+                        const repliedMessageId = message.reply_to_message.message_id;
+                        const auction = await repo.getAuctionByTelegramMessage(repliedMessageId, chatId);
 
-			if (auction) {
+                        if (auction) {
 				const response = await repo.recordResponse({
 					auctionId: auction.id,
 					userId: String(message.from?.id ?? ''),
@@ -59,13 +59,29 @@ export const POST: RequestHandler = async ({ request, platform }) => {
 					text: message.text
 				});
 
-				return json({ ok: true, auctionId: auction.id, response });
-			}
-		}
+                                return json({ ok: true, auctionId: auction.id, response });
+                        }
 
-		return json({ ok: true });
-	} catch (error) {
-		console.error('Failed to process Telegram webhook', error);
+                        const messageRequest = await repo.getMessageRequestByTelegramMessage(
+                                repliedMessageId,
+                                chatId
+                        );
+
+                        if (messageRequest) {
+                                const response = await repo.recordMessageResponse({
+                                        messageRequestId: messageRequest.id,
+                                        userId: String(message.from?.id ?? ''),
+                                        username: message.from?.username ?? null,
+                                        text: message.text
+                                });
+
+                                return json({ ok: true, messageRequestId: messageRequest.id, response });
+                        }
+                }
+
+                return json({ ok: true });
+        } catch (error) {
+                console.error('Failed to process Telegram webhook', error);
 		return json({ error: 'Failed to process webhook' }, { status: 500 });
 	}
 };
