@@ -1,7 +1,26 @@
 <script lang="ts">
+        import { SUPPORTED_STABLECOINS, type StablecoinMetadata } from '$lib/stablecoins';
         import type { PageData } from './$types';
 
         let { data } = $props<{ data: PageData }>();
+
+        const supportedStablecoins: StablecoinMetadata[] = SUPPORTED_STABLECOINS;
+        const defaultCurrency = data.payment.currency ? data.payment.currency.toUpperCase() : 'USDC';
+        let selectedCurrency = $state(defaultCurrency);
+        const stablecoinOptions: StablecoinMetadata[] = supportedStablecoins.some(
+                (coin) => coin.code === defaultCurrency
+        )
+                ? supportedStablecoins
+                : [
+                                {
+                                        code: defaultCurrency,
+                                        name: defaultCurrency,
+                                        symbol: defaultCurrency,
+                                        decimals: 2,
+                                        defaultMint: null
+                                },
+                                ...supportedStablecoins
+                        ];
 
         const formatAmount = (amount: number, currency: string) => {
                 if (currency.toUpperCase() === 'USD') {
@@ -35,11 +54,11 @@
 		});
 	};
 
-        const buildFallbackCheckoutUrl = () => {
+        const buildFallbackCheckoutUrl = (currency: string) => {
                 const url = new URL('https://facilitator.payai.network/pay');
                 url.searchParams.set('amount', data.payment.amount.toString());
                 url.searchParams.set('recipient', data.payment.recipient);
-                url.searchParams.set('currency', data.payment.currency);
+                url.searchParams.set('currency', currency);
                 url.searchParams.set('network', data.payment.network);
 
 		if (data.payment.group) {
@@ -65,51 +84,79 @@
                 return url.toString();
         };
 
-        const checkoutUrl = $derived(data.payment.checkout ?? buildFallbackCheckoutUrl());
+        const selectedStablecoin = $derived(
+                stablecoinOptions.find((coin) => coin.code === selectedCurrency) ?? null
+        );
+        const amountDisplay = $derived(formatAmount(data.payment.amount, selectedCurrency));
+        const currencyDisplay = $derived(
+                selectedStablecoin
+                        ? `${selectedStablecoin.symbol} (${selectedStablecoin.name})`
+                        : selectedCurrency
+        );
+        const checkoutUrl = $derived(
+                selectedCurrency === defaultCurrency && data.payment.checkout
+                        ? data.payment.checkout
+                        : buildFallbackCheckoutUrl(selectedCurrency)
+        );
         const facilitatorUrl = $derived(data.payment.facilitator ?? null);
         const expiresAtDisplay = $derived(formatExpiration(data.payment.expiresAt ?? null));
+        const pageDescription = $derived(
+                `Send ${amountDisplay} to ${data.payment.recipient} on ${data.payment.network}.`
+        );
 </script>
 
 <svelte:head>
 	<title>Complete your payment</title>
-	<meta
-		name="description"
-		content={`Send ${formatAmount(data.payment.amount, data.payment.currency)} to ${data.payment.recipient} on ${data.payment.network}.`}
-	/>
+        <meta name="description" content={pageDescription} />
 </svelte:head>
 
 <article class="payment-page">
 	<header class="intro">
 		<h2>Complete your payment</h2>
-		<p>
-			Send {formatAmount(data.payment.amount, data.payment.currency)} on {data.payment.network} to
-			<code>{data.payment.recipient}</code>.
-		</p>
-		{#if data.payment.group}
-			<p class="group-note">Payment requested for <strong>{data.payment.group}</strong>.</p>
-		{/if}
-		<div class="checkout">
-			<a class="checkout-button" href={checkoutUrl} rel="noreferrer" target="_blank"
-				>Open checkout</a
-			>
+                <p>
+                        Send {amountDisplay} on {data.payment.network} to
+                        <code>{data.payment.recipient}</code>.
+                </p>
+                {#if data.payment.group}
+                        <p class="group-note">Payment requested for <strong>{data.payment.group}</strong>.</p>
+                {/if}
+                <div class="currency-selector">
+                        <label for="stablecoin-choice">Choose a stablecoin</label>
+                        <select
+                                id="stablecoin-choice"
+                                bind:value={selectedCurrency}
+                                aria-describedby="stablecoin-hint"
+                        >
+                                {#each stablecoinOptions as coin}
+                                        <option value={coin.code}>{coin.name} ({coin.symbol})</option>
+                                {/each}
+                        </select>
+                        <p id="stablecoin-hint" class="selector-hint">
+                                Pick the Solana stablecoin you'd like to use. The checkout link updates automatically.
+                        </p>
+                </div>
+                <div class="checkout">
+                        <a class="checkout-button" href={checkoutUrl} rel="noreferrer" target="_blank"
+                                >Open checkout</a
+                        >
                         <p class="checkout-hint">
-                                This opens the hosted checkout so you can approve the {data.payment.currency} transfer from
+                                This opens the hosted checkout so you can approve the {selectedCurrency} transfer from
                                 your Solana wallet.
                         </p>
-		</div>
+                </div>
 	</header>
 
 	<section class="details">
 		<h3 id="payment-details">Payment details</h3>
 		<dl aria-labelledby="payment-details">
-			<div>
-				<dt>Amount</dt>
-				<dd>{formatAmount(data.payment.amount, data.payment.currency)}</dd>
-			</div>
-			<div>
-				<dt>Currency</dt>
-				<dd>{data.payment.currency}</dd>
-			</div>
+                        <div>
+                                <dt>Amount</dt>
+                                <dd>{amountDisplay}</dd>
+                        </div>
+                        <div>
+                                <dt>Currency</dt>
+                                <dd>{currencyDisplay}</dd>
+                        </div>
 			<div>
 				<dt>Network</dt>
 				<dd>{data.payment.network}</dd>
@@ -159,7 +206,7 @@
 				payload for this request.
 			</li>
 			<li>
-                                Approve the {data.payment.currency} transfer from your Solana wallet (e.g. Phantom). The
+                                Approve the {selectedCurrency} transfer from your Solana wallet (e.g. Phantom). The
                                 facilitator will
 				broadcast the transaction and share the encoded payment payload with this app so the bot can
 				verify it.
@@ -196,10 +243,41 @@
 		font-size: clamp(1.5rem, 3vw, 2.25rem);
 	}
 
-	p {
-		margin: 0;
-		line-height: 1.6;
-	}
+        p {
+                margin: 0;
+                line-height: 1.6;
+        }
+
+        .currency-selector {
+                margin-top: 1.5rem;
+                display: grid;
+                gap: 0.5rem;
+        }
+
+        .currency-selector label {
+                font-weight: 600;
+                color: #0f172a;
+        }
+
+        .currency-selector select {
+                appearance: none;
+                border: 1px solid rgba(15, 23, 42, 0.12);
+                border-radius: 0.75rem;
+                padding: 0.75rem 1rem;
+                font-size: 1rem;
+                color: #0f172a;
+                background: #f8fafc;
+        }
+
+        .currency-selector select:focus-visible {
+                outline: 3px solid rgba(59, 130, 246, 0.35);
+                outline-offset: 2px;
+        }
+
+        .selector-hint {
+                font-size: 0.9rem;
+                color: #64748b;
+        }
 
 	.group-note {
 		margin-top: 0.75rem;
