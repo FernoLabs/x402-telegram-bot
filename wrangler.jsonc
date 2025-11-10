@@ -26,7 +26,7 @@
 		}
 	],
 	"vars": {
-		"TELEGRAM_WEBHOOK_URL": "https://x402-tg-auction-bot.cheron-augustin.workers.dev/api/telegram/webhook",
+		"TELEGRAM_WEBHOOK_URL": "https://x402-telegram.ferno.ag/api/telegram/webhook",
                 "SOLANA_RPC_URL": "https://jenifer-6iwpyb-fast-mainnet.helius-rpc.com",
                 "SOLANA_USDC_MINT_ADDRESS": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
                 "SOLANA_USDT_MINT_ADDRESS": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
