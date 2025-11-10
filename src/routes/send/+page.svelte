@@ -148,9 +148,9 @@
 				<span>Target group</span>
 				<select bind:value={selectedGroupId} required>
 					{#each activeGroups as group (group.id)}
-						<option value={String(group.id)}>
-							{group.name} — minimum ${group.minBid.toFixed(2)} USDC
-						</option>
+                                                <option value={String(group.id)}>
+                                                        {group.name} — minimum ${group.minBid.toFixed(2)} stablecoin
+                                                </option>
 					{/each}
 				</select>
 			</label>

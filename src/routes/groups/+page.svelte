@@ -67,11 +67,12 @@
 
 	<section class="note" aria-labelledby="note-title">
 		<h3 id="note-title">How pricing works</h3>
-		<p>
-			Senders pay the listed amount in USDC on the Solana network using their own wallet. Payments
-			confirm within seconds and the bot posts the message with a receipt. Group owners can pause
-			listings or adjust pricing at any time from Telegram using the /setprice command.
-		</p>
+                <p>
+                        Senders pay the listed amount in the configured Solana stablecoin (USDC by default) using their
+                        own wallet. Payments confirm within seconds and the bot posts the message with a receipt. Group
+                        owners can pause listings or adjust pricing at any time from Telegram using the /setprice
+                        command.
+                </p>
 		<a class="action" href="/setup">Add your group</a>
 	</section>
 </section>

@@ -92,9 +92,10 @@
 			<a class="checkout-button" href={checkoutUrl} rel="noreferrer" target="_blank"
 				>Open checkout</a
 			>
-			<p class="checkout-hint">
-				This opens the hosted checkout so you can approve the USDC transfer from your Solana wallet.
-			</p>
+                        <p class="checkout-hint">
+                                This opens the hosted checkout so you can approve the {data.payment.currency} transfer from
+                                your Solana wallet.
+                        </p>
 		</div>
 	</header>
 
@@ -158,7 +159,8 @@
 				payload for this request.
 			</li>
 			<li>
-				Approve the USDC transfer from your Solana wallet (e.g. Phantom). The facilitator will
+                                Approve the {data.payment.currency} transfer from your Solana wallet (e.g. Phantom). The
+                                facilitator will
 				broadcast the transaction and share the encoded payment payload with this app so the bot can
 				verify it.
 			</li>

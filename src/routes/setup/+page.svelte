@@ -14,10 +14,11 @@
 <section class="page" aria-labelledby="setup-title">
 	<header>
 		<h2 id="setup-title">Setup checklist</h2>
-		<p>
-			Use this guide to connect your Telegram group to paid posts. Once complete, anyone with the
-			link can pay in USDC on Solana and the bot will post to your members.
-		</p>
+                <p>
+                        Use this guide to connect your Telegram group to paid posts. Once complete, anyone with the
+                        link can pay in supported Solana stablecoins (USDC, USDT, Cash, PYUSD, USDG, USDS, or hyUSD)
+                        and the bot will post to your members.
+                </p>
 	</header>
 
 	<ol class="checklist" aria-label="Group setup steps">
@@ -33,21 +34,21 @@
 		</li>
 		<li>
 			<h3>Link your payout wallet</h3>
-			<p>
-				Provide the Solana address that should receive USDC. Payouts settle automatically once a
-				message is confirmed, so pick a wallet you check often.
-			</p>
+                        <p>
+                                Provide the Solana address that should receive your stablecoin payouts. Transfers settle
+                                automatically once a message is confirmed, so pick a wallet you check often.
+                        </p>
 			<p class="callout">
 				In your group chat, run <code>/setwallet &lt;SOL-address&gt;</code> as an admin.
 			</p>
 		</li>
 		<li>
 			<h3>Choose a price per message</h3>
-			<p>
-				Decide on a flat rate in USDC. Most communities start between $0.50 and $5.00. You can edit
-				this number anytime from the group directory.
-			</p>
-			<p class="callout">Update it instantly with <code>/setprice &lt;amount-in-USDC&gt;</code>.</p>
+                        <p>
+                                Decide on a flat rate in your chosen stablecoin. Most communities start between $0.50 and
+                                $5.00. You can edit this number anytime from the group directory.
+                        </p>
+                        <p class="callout">Update it instantly with <code>/setprice &lt;amount&gt;</code>.</p>
 		</li>
 		<li>
 			<h3>Share your guidelines</h3>
