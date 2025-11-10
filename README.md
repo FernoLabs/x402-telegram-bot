@@ -91,8 +91,17 @@ x-payment-txhash: 0xtransactionhash
 The worker returns an HTTP 402 response with the recipient address and amount when additional payment is required.
 
 Responses return structured x402 metadata describing the on-chain transfer that must be completed. After submitting a Solana
-transaction, resubmit the request with the transaction signature in the `x-payment-txhash` header so the worker can verify the
-transfer directly against Solana RPC.
+transaction, resubmit the request with an `x-payment` header that encodes the SPL402 payment payload (or the legacy
+`x-payment-txhash` header) so the worker can verify the transfer directly against Solana RPC.
+
+Use the `scripts/run-spl402-flow.mjs` helper to exercise the end-to-end flow locally:
+
+```bash
+node scripts/run-spl402-flow.mjs --group 1 --message "Hello group" --wallet <wallet-address>
+# After paying the transfer, provide the signature so the script resubmits with an SPL402 payload
+node scripts/run-spl402-flow.mjs --group 1 --message "Hello group" --wallet <wallet-address> \
+  --from <payer-address> --signature <tx-signature> --submit
+```
 
 ## Telegram webhook flow
 

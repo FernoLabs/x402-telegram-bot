@@ -5,18 +5,20 @@ import { basename, resolve } from 'node:path';
 
 function printHelp() {
         const script = basename(process.argv[1] ?? 'run-spl402-flow.mjs');
-        console.log(`Usage: node scripts/${script} --group <id> --message <text> [options]\n\n` +
+        console.log(`Usage: node scripts/${script} --group <id> --message <text> --wallet <address> [options]\n\n` +
                 'Options:\n' +
                 '  --api <url>            Base URL for the worker (default: http://127.0.0.1:8787)\n' +
-                '  --group <id>           Group identifier to post the auction bid\n' +
-                '  --message <text>       Message to include with the bid\n' +
+                '  --group <id>           Group identifier where the message will be posted\n' +
+                '  --message <text>       Message to include with the paid request\n' +
+                '  --wallet <address>     Wallet recorded with the message request\n' +
+                '  --sender <name>        Optional sender name stored with the message request\n' +
                 '  --from <address>       Sender address to embed in the SPL402 payload\n' +
                 '  --signature <sig>      Transaction signature to embed in the SPL402 payload\n' +
                 '  --timestamp <ms>       Unix timestamp in milliseconds (defaults to now)\n' +
                 '  --amount <value>       Override the amount when resubmitting (defaults to the requirement)\n' +
                 '  --wire <path>          Optional path to a base64 wire transaction to include\n' +
                 '  --legacy               Also set legacy X-PAYMENT headers for debugging\n' +
-                '  --submit               Immediately retry the auction call with the provided payment details\n' +
+                '  --submit               Immediately retry the message call with the provided payment details\n' +
                 '  --help                 Show this message\n');
 }
 
@@ -25,6 +27,8 @@ function parseArgs(argv) {
                 api: 'http://127.0.0.1:8787',
                 group: null,
                 message: null,
+                wallet: null,
+                sender: null,
                 from: null,
                 signature: null,
                 timestamp: null,
@@ -45,6 +49,12 @@ function parseArgs(argv) {
                                 break;
                         case '--message':
                                 args.message = argv[++i];
+                                break;
+                        case '--wallet':
+                                args.wallet = argv[++i];
+                                break;
+                        case '--sender':
+                                args.sender = argv[++i];
                                 break;
                         case '--from':
                                 args.from = argv[++i];
@@ -97,8 +107,8 @@ async function readWireTransaction(path) {
         return content.trim();
 }
 
-async function requestAuction(baseUrl, body, headers = {}) {
-        const url = new URL('/api/auctions', baseUrl);
+async function requestMessage(baseUrl, body, headers = {}) {
+        const url = new URL('/api/messages', baseUrl);
         const response = await fetch(url, {
                 method: 'POST',
                 headers: {
@@ -173,14 +183,17 @@ async function main() {
 
                 ensure(args.group, 'Missing required option --group <id>');
                 ensure(args.message, 'Missing required option --message <text>');
+                ensure(args.wallet, 'Missing required option --wallet <address>');
 
                 const body = {
-                        groupId: args.group,
-                        message: args.message
+                        groupId: Number(args.group),
+                        message: args.message,
+                        walletAddress: args.wallet,
+                        senderName: args.sender || undefined
                 };
 
-                console.log('Requesting auction without payment headers...');
-                const first = await requestAuction(args.api, body);
+                console.log('Requesting message without payment headers...');
+                const first = await requestMessage(args.api, body);
 
                 console.log(`Response status: ${first.status}`);
                 if (first.data) {
@@ -199,15 +212,39 @@ async function main() {
                         throw new Error('Unable to find SPL402 payment requirement in response');
                 }
 
+                const paymentId =
+                        first.headers.get('x-payment-id') ??
+                        first.headers.get('x-402-payment-id') ??
+                        (first.data?.paymentId ?? null);
+                const paymentNonce =
+                        first.headers.get('x-payment-nonce') ??
+                        first.headers.get('x-402-nonce') ??
+                        (first.data?.nonce ?? null);
+
                 console.log('\nSPL402 Requirement:');
                 console.log(JSON.stringify(requirement, null, 2));
+
+                if (paymentId) {
+                        console.log(`\nPayment ID: ${paymentId}`);
+                }
+                if (paymentNonce) {
+                        console.log(`Nonce: ${paymentNonce}`);
+                }
 
                 if (!args.submit) {
                         console.log('\nRe-run with --submit, --from, and --signature once you have a confirmed transaction.');
                         return;
                 }
 
+                if (!args.from) {
+                        args.from = args.wallet;
+                }
+
                 const payload = buildSpl402Payload(requirement, args);
+
+                if (!paymentId) {
+                        throw new Error('Missing payment ID in the payment requirement response.');
+                }
 
                 if (args.wireTransaction) {
                         const wire = await readWireTransaction(args.wireTransaction);
@@ -219,11 +256,19 @@ async function main() {
                 const encodedPayload = encodePaymentPayload(payload);
                 const headers = {
                         'x-payment': encodedPayload,
+                        'x-payment-id': paymentId,
+                        'x-402-payment-id': paymentId,
+                        ...(paymentNonce
+                                ? {
+                                          'x-payment-nonce': paymentNonce,
+                                          'x-402-nonce': paymentNonce
+                                  }
+                                : {}),
                         ...getLegacyHeaders(requirement, payload, args)
                 };
 
                 console.log('\nResubmitting with SPL402 proof...');
-                const second = await requestAuction(args.api, body, headers);
+                const second = await requestMessage(args.api, body, headers);
                 console.log(`Response status: ${second.status}`);
                 if (second.data) {
                         console.log('Response body:', JSON.stringify(second.data, null, 2));

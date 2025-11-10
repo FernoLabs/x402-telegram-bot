@@ -10,6 +10,8 @@ const AMOUNT_HEADERS = ['x-402-amount', 'x-payment-amount'];
 const SENDER_HEADERS = ['x-402-sender', 'x-payment-sender'];
 const TX_HASH_HEADERS = ['x-402-tx-hash', 'x-payment-txhash'];
 const NETWORK_HEADERS = ['x-402-network', 'x-payment-network'];
+const PAYMENT_ID_HEADERS = ['x-402-payment-id', 'x-payment-id'];
+const PAYMENT_NONCE_HEADERS = ['x-402-nonce', 'x-payment-nonce'];
 const PAYMENT_PAYLOAD_HEADER = 'x-payment';
 
 interface PaymentValidationOptions {
@@ -27,13 +29,23 @@ interface PaymentValidationOptions {
 }
 
 function readHeader(request: Request, keys: string[]): string | null {
-	for (const key of keys) {
-		const value = request.headers.get(key);
-		if (value) {
-			return value;
-		}
-	}
-	return null;
+        for (const key of keys) {
+                const value = request.headers.get(key);
+                if (value) {
+                        return value;
+                }
+        }
+        return null;
+}
+
+export function readPaymentIdentification(request: Request): {
+        paymentId: string | null;
+        nonce: string | null;
+} {
+        return {
+                paymentId: readHeader(request, PAYMENT_ID_HEADERS),
+                nonce: readHeader(request, PAYMENT_NONCE_HEADERS)
+        };
 }
 
 interface LegacyHeaderValues {
