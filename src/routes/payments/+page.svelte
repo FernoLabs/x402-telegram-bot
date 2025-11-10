@@ -2,7 +2,7 @@
         import { onDestroy } from 'svelte';
 	import { PUBLIC_SOLANA_RPC_ENDPOINT } from '$lib/config';
 	import { wallet } from '$lib/wallet/wallet.svelte';
-        import type { MessagePaymentHistoryEntry, MessageResponse } from '$lib/types';
+        import type { MessagePaymentHistoryEntry, MessageRating, MessageResponse } from '$lib/types';
 	import {
 		address,
 		appendTransactionMessageInstructions,
@@ -41,15 +41,29 @@
                 error?: string;
         }
 
-	let payments: MessagePaymentHistoryEntry[] = [];
-	let loading = false;
-	let loadError: string | null = null;
-	let refreshing = false;
-	let actionStatus: Record<string, string | null> = {};
-	let actionError: Record<string, string | null> = {};
+        interface SaveRatingResponse {
+                rating?: MessageRating;
+                error?: string;
+        }
+
+        interface RatingFormState {
+                rating: number | null;
+                comment: string;
+                submitting: boolean;
+                error: string | null;
+                success: boolean;
+        }
+
+        let payments: MessagePaymentHistoryEntry[] = [];
+        let loading = false;
+        let loadError: string | null = null;
+        let refreshing = false;
+        let actionStatus: Record<string, string | null> = {};
+        let actionError: Record<string, string | null> = {};
         let lastWallet: string | null = null;
         let verificationInterval: ReturnType<typeof setInterval> | null = null;
         let verificationRequestInFlight = false;
+        let ratingForms: Record<number, RatingFormState> = {};
 
         const responseTimeFormatter = new Intl.DateTimeFormat('en-US', {
                 dateStyle: 'medium',
@@ -95,6 +109,40 @@
                 payments = [];
                 stopVerificationPolling();
         });
+
+        $: {
+                const nextState: Record<number, RatingFormState> = {};
+
+                for (const entry of payments) {
+                        const message = entry.message;
+                        if (!message) {
+                                continue;
+                        }
+
+                        const messageId = message.id;
+                        const existing = ratingForms[messageId];
+                        const base: RatingFormState = existing
+                                ? { ...existing }
+                                : {
+                                          rating: message.rating?.rating ?? null,
+                                          comment: message.rating?.comment ?? '',
+                                          submitting: false,
+                                          error: null,
+                                          success: false
+                                  };
+
+                        if (!base.submitting) {
+                                base.rating = message.rating?.rating ?? null;
+                                base.comment = message.rating?.comment ?? '';
+                        }
+
+                        nextState[messageId] = base;
+                }
+
+                if (!ratingStatesEqual(ratingForms, nextState)) {
+                        ratingForms = nextState;
+                }
+        }
 
         $: {
                 if (walletAddress && awaitingSignatureVerification) {
@@ -144,6 +192,149 @@
                 actionStatus = { ...actionStatus, [paymentId]: status };
                 if (error !== undefined) {
                         actionError = { ...actionError, [paymentId]: error };
+                }
+        }
+
+        function ratingStatesEqual(
+                a: Record<number, RatingFormState>,
+                b: Record<number, RatingFormState>
+        ): boolean {
+                const aKeys = Object.keys(a);
+                const bKeys = Object.keys(b);
+                if (aKeys.length !== bKeys.length) {
+                        return false;
+                }
+
+                for (const key of aKeys) {
+                        const id = Number(key);
+                        const aState = a[id];
+                        const bState = b[id];
+                        if (!aState || !bState) {
+                                return false;
+                        }
+
+                        if (
+                                aState.rating !== bState.rating ||
+                                aState.comment !== bState.comment ||
+                                aState.submitting !== bState.submitting ||
+                                aState.error !== bState.error ||
+                                aState.success !== bState.success
+                        ) {
+                                return false;
+                        }
+                }
+
+                return true;
+        }
+
+        function updateRatingForm(messageId: number, updates: Partial<RatingFormState>) {
+                const current: RatingFormState = ratingForms[messageId] ?? {
+                        rating: null,
+                        comment: '',
+                        submitting: false,
+                        error: null,
+                        success: false
+                };
+
+                ratingForms = {
+                        ...ratingForms,
+                        [messageId]: { ...current, ...updates }
+                };
+        }
+
+        function handleRatingChange(messageId: number, value: string) {
+                const parsed = Number(value);
+                updateRatingForm(messageId, {
+                        rating: Number.isFinite(parsed) ? parsed : null,
+                        error: null,
+                        success: false
+                });
+        }
+
+        function handleRatingCommentChange(messageId: number, value: string) {
+                updateRatingForm(messageId, {
+                        comment: value,
+                        error: null,
+                        success: false
+                });
+        }
+
+        async function submitRating(messageId: number) {
+                const form = ratingForms[messageId];
+                if (!form) {
+                        return;
+                }
+
+                if (!walletAddress) {
+                        updateRatingForm(messageId, {
+                                error: 'Connect your wallet to submit a rating.'
+                        });
+                        return;
+                }
+
+                if (!form.rating || form.rating < 1 || form.rating > 5) {
+                        updateRatingForm(messageId, {
+                                error: 'Select a rating between 1 and 5 before submitting.'
+                        });
+                        return;
+                }
+
+                updateRatingForm(messageId, { submitting: true, error: null, success: false });
+
+                try {
+                        const response = await fetch('/api/ratings', {
+                                method: 'POST',
+                                headers: { 'content-type': 'application/json' },
+                                body: JSON.stringify({
+                                        messageRequestId: messageId,
+                                        rating: form.rating,
+                                        comment: form.comment?.trim() || null,
+                                        walletAddress
+                                })
+                        });
+
+                        const payload = (await response.json()) as SaveRatingResponse;
+
+                        if (!response.ok) {
+                                const fallback =
+                                        typeof payload?.error === 'string'
+                                                ? payload.error
+                                                : 'Unable to submit rating.';
+                                updateRatingForm(messageId, { submitting: false, error: fallback });
+                                return;
+                        }
+
+                        const rating = payload.rating ?? null;
+
+                        payments = payments.map((entry) => {
+                                if (entry.message?.id === messageId) {
+                                        const message = entry.message;
+                                        if (!message) {
+                                                return entry;
+                                        }
+
+                                        return {
+                                                ...entry,
+                                                message: {
+                                                        ...message,
+                                                        rating
+                                                }
+                                        };
+                                }
+
+                                return entry;
+                        });
+
+                        updateRatingForm(messageId, {
+                                submitting: false,
+                                error: null,
+                                success: true,
+                                rating: rating?.rating ?? form.rating,
+                                comment: rating?.comment ?? form.comment
+                        });
+                } catch (error) {
+                        const message = error instanceof Error ? error.message : 'Unable to submit rating.';
+                        updateRatingForm(messageId, { submitting: false, error: message });
                 }
         }
 
@@ -546,6 +737,76 @@
                                                                 {/each}
                                                         </ul>
                                                 </section>
+                                                <section class="details rating" aria-live="polite">
+                                                        <h4>Rate the replies</h4>
+                                                        {#if ratingForms[entry.message!.id]}
+                                                                <div class="rating-form">
+                                                                        <label>
+                                                                                <span>Rating</span>
+                                                                                <select
+                                                                                        value={
+                                                                                                ratingForms[entry.message!.id].rating
+                                                                                                        ? String(
+                                                                                                                  ratingForms[
+                                                                                                                          entry.message!.id
+                                                                                                                  ].rating
+                                                                                                          )
+                                                                                                        : ''
+                                                                                        }
+                                                                                        on:change={(event) =>
+                                                                                                handleRatingChange(
+                                                                                                        entry.message!.id,
+                                                                                                        event.currentTarget.value
+                                                                                                )
+                                                                                        }
+                                                                                >
+                                                                                        <option value="" disabled>
+                                                                                                Select a rating
+                                                                                        </option>
+                                                                                        <option value="5">5 — Excellent</option>
+                                                                                        <option value="4">4 — Good</option>
+                                                                                        <option value="3">3 — Neutral</option>
+                                                                                        <option value="2">2 — Needs work</option>
+                                                                                        <option value="1">1 — Not helpful</option>
+                                                                                </select>
+                                                                        </label>
+                                                                        <label>
+                                                                                <span>Comment (optional)</span>
+                                                                                <textarea
+                                                                                        rows={3}
+                                                                                        maxlength={500}
+                                                                                        value={ratingForms[entry.message!.id].comment}
+                                                                                        on:input={(event) =>
+                                                                                                handleRatingCommentChange(
+                                                                                                        entry.message!.id,
+                                                                                                        event.currentTarget.value
+                                                                                                )
+                                                                                        }
+                                                                                        placeholder="Share why the reply was or wasn't helpful."
+                                                                                ></textarea>
+                                                                        </label>
+                                                                        {#if ratingForms[entry.message!.id].error}
+                                                                                <p class="error">{ratingForms[entry.message!.id].error}</p>
+                                                                        {/if}
+                                                                        {#if ratingForms[entry.message!.id].success}
+                                                                                <p class="success">Thanks for the feedback!</p>
+                                                                        {/if}
+                                                                        <button
+                                                                                type="button"
+                                                                                on:click={() => submitRating(entry.message!.id)}
+                                                                                disabled={ratingForms[entry.message!.id].submitting}
+                                                                        >
+                                                                                {#if ratingForms[entry.message!.id].submitting}
+                                                                                        Saving…
+                                                                                {:else if entry.message.rating}
+                                                                                        Update rating
+                                                                                {:else}
+                                                                                        Submit rating
+                                                                                {/if}
+                                                                        </button>
+                                                                </div>
+                                                        {/if}
+                                                </section>
                                         {/if}
                                         <section class="details">
                                                 <h4>Payment details</h4>
@@ -770,6 +1031,11 @@
                 gap: 0.75rem;
         }
 
+        .rating {
+                display: grid;
+                gap: 0.75rem;
+        }
+
         .responses-list {
                 list-style: none;
                 margin: 0;
@@ -809,6 +1075,52 @@
                 margin: 0;
                 white-space: pre-wrap;
                 color: #1f2937;
+        }
+
+        .rating-form {
+                display: grid;
+                gap: 0.75rem;
+        }
+
+        .rating-form label {
+                display: grid;
+                gap: 0.4rem;
+        }
+
+        .rating-form select,
+        .rating-form textarea {
+                font: inherit;
+                padding: 0.6rem 0.75rem;
+                border: 1px solid #d1d5db;
+                border-radius: 0.65rem;
+                background: #f9fafb;
+        }
+
+        .rating-form textarea {
+                resize: vertical;
+                min-height: 4.5rem;
+        }
+
+        .rating-form button {
+                align-self: start;
+                padding: 0.55rem 1.2rem;
+                border-radius: 0.75rem;
+                border: none;
+                font-weight: 600;
+                background: #111827;
+                color: white;
+                cursor: pointer;
+        }
+
+        .rating-form button[disabled] {
+                opacity: 0.6;
+                cursor: default;
+        }
+
+        .rating .success {
+                margin: 0;
+                color: #0f766e;
+                font-weight: 600;
         }
 
         .details dl {

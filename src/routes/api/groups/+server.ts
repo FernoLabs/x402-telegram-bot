@@ -23,38 +23,50 @@ export const POST: RequestHandler = async ({ request, platform }) => {
 		if (!env?.DB) {
 			throw new Error('D1 database binding `DB` is not configured.');
 		}
-		const repo = new AuctionRepository(env.DB);
-		const body = (await request.json()) as Partial<{
-			name: string;
-			category: string | null;
-			telegramId: string;
-			minBid: number;
-			ownerAddress: string;
-		}>;
+                const repo = new AuctionRepository(env.DB);
+                const body = (await request.json()) as Partial<{
+                        name: string;
+                        category: string | null;
+                        description: string | null;
+                        telegramId: string;
+                        minBid: number;
+                        ownerAddress: string;
+                }>;
 
-		const { name, category = null, telegramId, minBid, ownerAddress } = body;
+                const {
+                        name,
+                        category = null,
+                        description = null,
+                        telegramId,
+                        minBid,
+                        ownerAddress
+                } = body;
 
-		if (!name || !telegramId || !ownerAddress || typeof minBid === 'undefined') {
-			return json(
-				{
-					error: 'Missing required fields: name, telegramId, minBid, ownerAddress'
-				},
-				{ status: 400 }
-			);
-		}
+                if (!name || !telegramId || !ownerAddress || typeof minBid === 'undefined') {
+                        return json(
+                                {
+                                        error: 'Missing required fields: name, telegramId, minBid, ownerAddress'
+                                },
+                                { status: 400 }
+                        );
+                }
 
-		const parsedMinBid = Number(minBid);
-		if (!Number.isFinite(parsedMinBid) || parsedMinBid <= 0) {
-			return json({ error: 'minBid must be a positive number' }, { status: 400 });
-		}
+                const descriptionValue = typeof description === 'string' ? description.trim() : null;
+                const normalizedDescription = descriptionValue && descriptionValue.length > 0 ? descriptionValue : null;
 
-		const group = await repo.createGroup({
-			name,
-			category,
-			telegramId,
-			minBid: parsedMinBid,
-			ownerAddress
-		});
+                const parsedMinBid = Number(minBid);
+                if (!Number.isFinite(parsedMinBid) || parsedMinBid <= 0) {
+                        return json({ error: 'minBid must be a positive number' }, { status: 400 });
+                }
+
+                const group = await repo.createGroup({
+                        name,
+                        category,
+                        description: normalizedDescription,
+                        telegramId,
+                        minBid: parsedMinBid,
+                        ownerAddress
+                });
 
 		return json(group, { status: 201 });
 	} catch (error) {

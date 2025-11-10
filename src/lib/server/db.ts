@@ -5,6 +5,7 @@ import type {
         CreateGroupInput,
         Group,
         MessagePaymentHistoryEntry,
+        MessageRating,
         MessageRequest,
         MessageRequestStatus,
         MessageResponse,
@@ -15,13 +16,14 @@ import type {
 } from '$lib/types';
 
 interface GroupRow {
-	id: number;
-	name: string;
-	category: string | null;
-	telegram_id: string;
-	min_bid: number;
-	owner_address: string;
-	active: number;
+        id: number;
+        name: string;
+        category: string | null;
+        description: string | null;
+        telegram_id: string;
+        min_bid: number;
+        owner_address: string;
+        active: number;
 	total_earned: number;
 	message_count: number;
 	created_at: string;
@@ -59,6 +61,15 @@ interface MessageResponseRow {
         username: string | null;
         text: string;
         created_at: string;
+}
+
+interface MessageRatingRow {
+        id: number;
+        message_request_id: number;
+        rating: number;
+        comment: string | null;
+        created_at: string;
+        updated_at: string;
 }
 
 interface PaymentRequestRow {
@@ -148,27 +159,34 @@ interface MessageRequestRow {
 }
 
 interface MessageJoinRow extends PaymentJoinRow {
-	message_id: number | null;
-	message_group_id: number | null;
-	message_status: string | null;
-	message_sender_name: string | null;
-	message_wallet_address: string | null;
-	message_text: string | null;
-	message_last_error: string | null;
-	message_telegram_message_id: number | null;
-	message_telegram_chat_id: string | null;
-	message_sent_at: string | null;
-	message_created_at: string | null;
-	message_updated_at: string | null;
-	group_name: string | null;
-	group_category: string | null;
-	group_telegram_id: string | null;
-	group_min_bid: number | null;
-	group_owner_address: string | null;
-	group_active: number | null;
-	group_total_earned: number | null;
-	group_message_count: number | null;
-	group_created_at: string | null;
+        message_id: number | null;
+        message_group_id: number | null;
+        message_status: string | null;
+        message_sender_name: string | null;
+        message_wallet_address: string | null;
+        message_text: string | null;
+        message_last_error: string | null;
+        message_telegram_message_id: number | null;
+        message_telegram_chat_id: string | null;
+        message_sent_at: string | null;
+        message_created_at: string | null;
+        message_updated_at: string | null;
+        group_name: string | null;
+        group_category: string | null;
+        group_description: string | null;
+        group_telegram_id: string | null;
+        group_min_bid: number | null;
+        group_owner_address: string | null;
+        group_active: number | null;
+        group_total_earned: number | null;
+        group_message_count: number | null;
+        group_created_at: string | null;
+        rating_id: number | null;
+        rating_message_request_id: number | null;
+        rating_value: number | null;
+        rating_comment: string | null;
+        rating_created_at: string | null;
+        rating_updated_at: string | null;
 }
 
 interface CreatePaymentRequestInput {
@@ -243,12 +261,12 @@ export class AuctionRepository {
 	}
 
 	async listGroups(): Promise<Group[]> {
-		const { results } = await this.db
-			.prepare(
-				`SELECT id, name, category, telegram_id, min_bid, owner_address, active, total_earned, message_count, created_at
+                const { results } = await this.db
+                        .prepare(
+                                `SELECT id, name, category, description, telegram_id, min_bid, owner_address, active, total_earned, message_count, created_at
          FROM groups
          ORDER BY created_at DESC`
-			)
+                        )
 			.all<GroupRow>();
 
 		return (results ?? []).map(mapGroupRow);
@@ -256,11 +274,11 @@ export class AuctionRepository {
 
 	async getGroup(id: number): Promise<Group | null> {
 		const row = await this.db
-			.prepare(
-				`SELECT id, name, category, telegram_id, min_bid, owner_address, active, total_earned, message_count, created_at
+                        .prepare(
+                                `SELECT id, name, category, description, telegram_id, min_bid, owner_address, active, total_earned, message_count, created_at
          FROM groups
          WHERE id = ?`
-			)
+                        )
 			.bind(id)
 			.first<GroupRow>();
 
@@ -280,8 +298,8 @@ export class AuctionRepository {
 		const placeholders = identifiers.map(() => '?').join(', ');
 
 		const row = await this.db
-			.prepare(
-				`SELECT id, name, category, telegram_id, min_bid, owner_address, active, total_earned, message_count, created_at
+                        .prepare(
+                                `SELECT id, name, category, description, telegram_id, min_bid, owner_address, active, total_earned, message_count, created_at
          FROM groups
          WHERE LOWER(REPLACE(TRIM(telegram_id), '@', '')) IN (${placeholders})
          LIMIT 1`
@@ -294,17 +312,18 @@ export class AuctionRepository {
 
 	async createGroup(input: CreateGroupInput): Promise<Group> {
 		const result = await this.db
-			.prepare(
-				`INSERT INTO groups (name, category, telegram_id, min_bid, owner_address, active)
-         VALUES (?, ?, ?, ?, ?, ?)`
-			)
-			.bind(
-				input.name,
-				input.category ?? null,
-				input.telegramId.trim(),
-				input.minBid,
-				input.ownerAddress,
-				(input.active ?? true) ? 1 : 0
+                        .prepare(
+                                `INSERT INTO groups (name, category, description, telegram_id, min_bid, owner_address, active)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+                        )
+                        .bind(
+                                input.name,
+                                input.category ?? null,
+                                input.description ?? null,
+                                input.telegramId.trim(),
+                                input.minBid,
+                                input.ownerAddress,
+                                (input.active ?? true) ? 1 : 0
 			)
 			.run();
 
@@ -314,8 +333,8 @@ export class AuctionRepository {
 		}
 
 		const row = await this.db
-			.prepare(
-				`SELECT id, name, category, telegram_id, min_bid, owner_address, active, total_earned, message_count, created_at
+                        .prepare(
+                                `SELECT id, name, category, description, telegram_id, min_bid, owner_address, active, total_earned, message_count, created_at
          FROM groups
          WHERE id = ?`
 			)
@@ -627,6 +646,52 @@ export class AuctionRepository {
                 return (results ?? []).map(mapMessageResponseRow);
         }
 
+        async getMessageRating(messageRequestId: number): Promise<MessageRating | null> {
+                const row = await this.db
+                        .prepare(
+                                `SELECT id, message_request_id, rating, comment, created_at, updated_at
+         FROM message_ratings
+         WHERE message_request_id = ?`
+                        )
+                        .bind(messageRequestId)
+                        .first<MessageRatingRow>();
+
+                return row ? mapMessageRatingRow(row) : null;
+        }
+
+        async saveMessageRating(input: {
+                messageRequestId: number;
+                rating: number;
+                comment?: string | null;
+        }): Promise<MessageRating> {
+                await this.db
+                        .prepare(
+                                `INSERT INTO message_ratings (message_request_id, rating, comment)
+         VALUES (?, ?, ?)
+         ON CONFLICT(message_request_id) DO UPDATE SET
+           rating = excluded.rating,
+           comment = excluded.comment,
+           updated_at = CURRENT_TIMESTAMP`
+                        )
+                        .bind(input.messageRequestId, input.rating, input.comment ?? null)
+                        .run();
+
+                const row = await this.db
+                        .prepare(
+                                `SELECT id, message_request_id, rating, comment, created_at, updated_at
+         FROM message_ratings
+         WHERE message_request_id = ?`
+                        )
+                        .bind(input.messageRequestId)
+                        .first<MessageRatingRow>();
+
+                if (!row) {
+                        throw new Error('Failed to fetch message rating after save');
+                }
+
+                return mapMessageRatingRow(row);
+        }
+
 	private resolvePaymentIdentifier(candidate?: string | null): string {
 		if (candidate && candidate.trim()) {
 			return candidate.trim();
@@ -764,6 +829,7 @@ export class AuctionRepository {
 
                 const message = mapMessageRequestRow(row);
                 message.responses = [];
+                message.rating = null;
                 return { payment, message };
         }
 
@@ -829,6 +895,40 @@ export class AuctionRepository {
 
                 const request = mapMessageRequestRow(row);
                 request.responses = await this.listResponsesForMessageRequest(request.id);
+                request.rating = await this.getMessageRating(request.id);
+                return request;
+        }
+
+        async getMessageRequest(id: number): Promise<MessageRequest | null> {
+                const row = await this.db
+                        .prepare(
+                                `SELECT
+           id,
+           payment_request_id,
+           group_id,
+           wallet_address,
+           sender_name,
+           message,
+           status,
+           last_error,
+           telegram_message_id,
+           telegram_chat_id,
+           sent_at,
+           created_at,
+           updated_at
+         FROM message_requests
+         WHERE id = ?`
+                        )
+                        .bind(id)
+                        .first<MessageRequestRow>();
+
+                if (!row) {
+                        return null;
+                }
+
+                const request = mapMessageRequestRow(row);
+                request.responses = await this.listResponsesForMessageRequest(request.id);
+                request.rating = await this.getMessageRating(request.id);
                 return request;
         }
 
@@ -1008,6 +1108,7 @@ export class AuctionRepository {
 
                 const request = mapMessageRequestRow(row);
                 request.responses = await this.listResponsesForMessageRequest(request.id);
+                request.rating = await this.getMessageRating(request.id);
                 return request;
         }
 
@@ -1078,6 +1179,7 @@ export class AuctionRepository {
 
                 const request = mapMessageRequestRow(row);
                 request.responses = await this.listResponsesForMessageRequest(request.id);
+                request.rating = await this.getMessageRating(request.id);
                 return request;
         }
 
@@ -1129,13 +1231,20 @@ export class AuctionRepository {
            mr.updated_at AS message_updated_at,
            g.name AS group_name,
            g.category AS group_category,
+           g.description AS group_description,
            g.telegram_id AS group_telegram_id,
            g.min_bid AS group_min_bid,
            g.owner_address AS group_owner_address,
            g.active AS group_active,
            g.total_earned AS group_total_earned,
            g.message_count AS group_message_count,
-           g.created_at AS group_created_at
+           g.created_at AS group_created_at,
+           mrating.id AS rating_id,
+           mrating.message_request_id AS rating_message_request_id,
+           mrating.rating AS rating_value,
+           mrating.comment AS rating_comment,
+           mrating.created_at AS rating_created_at,
+           mrating.updated_at AS rating_updated_at
          FROM payment_requests pr
          LEFT JOIN pending_payments pp ON pp.id = (
            SELECT id
@@ -1145,6 +1254,7 @@ export class AuctionRepository {
            LIMIT 1
          )
          LEFT JOIN message_requests mr ON mr.payment_request_id = pr.id
+         LEFT JOIN message_ratings mrating ON mrating.message_request_id = mr.id
          LEFT JOIN groups g ON g.id = COALESCE(mr.group_id, pr.group_id)
         WHERE mr.wallet_address = ? OR pr.last_payer_address = ? OR pp.payer_address = ?
         ORDER BY COALESCE(pp.created_at, pr.updated_at) DESC`
@@ -1172,6 +1282,7 @@ function mapGroupRow(row: GroupRow): Group {
                 id: Number(row.id),
                 name: row.name,
                 category: row.category,
+                description: row.description,
                 telegramId: row.telegram_id,
                 minBid: Number(row.min_bid),
                 ownerAddress: row.owner_address,
@@ -1223,6 +1334,17 @@ function mapMessageResponseRow(row: MessageResponseRow): MessageResponse {
                 username: row.username,
                 text: row.text,
                 createdAt: row.created_at
+        };
+}
+
+function mapMessageRatingRow(row: MessageRatingRow): MessageRating {
+        return {
+                id: Number(row.id),
+                messageRequestId: Number(row.message_request_id),
+                rating: Number(row.rating),
+                comment: row.comment,
+                createdAt: row.created_at,
+                updatedAt: row.updated_at
         };
 }
 
@@ -1285,7 +1407,8 @@ function mapMessageRequestRow(row: MessageRequestRow): MessageRequest {
                 sentAt: row.sent_at,
                 createdAt: row.created_at,
                 updatedAt: row.updated_at,
-                responses: []
+                responses: [],
+                rating: null
         };
 }
 
@@ -1348,7 +1471,29 @@ function mapMessageJoinRow(row: MessageJoinRow): MessagePaymentHistoryEntry {
                                 sentAt: row.message_sent_at ?? null,
                                 createdAt: row.message_created_at ?? request.createdAt,
                                 updatedAt: row.message_updated_at ?? request.updatedAt,
-                                responses: []
+                                responses: [],
+                                rating:
+                                        row.rating_id !== null && row.rating_id !== undefined
+                                                ? {
+                                                                id: Number(row.rating_id),
+                                                                messageRequestId:
+                                                                        row.rating_message_request_id !== null &&
+                                                                        row.rating_message_request_id !== undefined
+                                                                                ? Number(row.rating_message_request_id)
+                                                                                : Number(row.message_id),
+                                                                rating: Number(row.rating_value ?? 0),
+                                                                comment: row.rating_comment ?? null,
+                                                                createdAt:
+                                                                        row.rating_created_at ??
+                                                                        row.message_updated_at ??
+                                                                        request.createdAt,
+                                                                updatedAt:
+                                                                        row.rating_updated_at ??
+                                                                        row.rating_created_at ??
+                                                                        row.message_updated_at ??
+                                                                        request.updatedAt
+                                                        }
+                                                : null
                         }
                 : null;
 
@@ -1364,6 +1509,7 @@ function mapMessageJoinRow(row: MessageJoinRow): MessagePaymentHistoryEntry {
                                 id: groupId,
                                 name: row.group_name ?? '',
                                 category: row.group_category,
+                                description: row.group_description ?? null,
                                 telegramId: row.group_telegram_id ?? '',
                                 minBid: Number(row.group_min_bid ?? request.amount),
                                 ownerAddress: row.group_owner_address ?? request.recipient,
