@@ -2,7 +2,7 @@
         import { onDestroy } from 'svelte';
 	import { PUBLIC_SOLANA_RPC_ENDPOINT } from '$lib/config';
 	import { wallet } from '$lib/wallet/wallet.svelte';
-	import type { MessagePaymentHistoryEntry } from '$lib/types';
+        import type { MessagePaymentHistoryEntry, MessageResponse } from '$lib/types';
 	import {
 		address,
 		appendTransactionMessageInstructions,
@@ -36,10 +36,10 @@
 		error?: string;
 	}
 
-	interface SubmitPaymentResponse {
-		payment?: MessagePaymentHistoryEntry;
-		error?: string;
-	}
+        interface SubmitPaymentResponse {
+                payment?: MessagePaymentHistoryEntry;
+                error?: string;
+        }
 
 	let payments: MessagePaymentHistoryEntry[] = [];
 	let loading = false;
@@ -50,6 +50,31 @@
         let lastWallet: string | null = null;
         let verificationInterval: ReturnType<typeof setInterval> | null = null;
         let verificationRequestInFlight = false;
+
+        const responseTimeFormatter = new Intl.DateTimeFormat('en-US', {
+                dateStyle: 'medium',
+                timeStyle: 'short'
+        });
+
+        function formatResponder(response: MessageResponse) {
+                if (response.username && response.username.trim()) {
+                        const handle = response.username.startsWith('@')
+                                ? response.username
+                                : `@${response.username}`;
+                        return handle;
+                }
+
+                return `User ${response.userId}`;
+        }
+
+        function formatResponseTime(value: string) {
+                const date = new Date(value);
+                if (Number.isNaN(date.getTime())) {
+                        return value;
+                }
+
+                return responseTimeFormatter.format(date);
+        }
 
         $: walletState = $wallet;
         $: walletAddress = walletState.publicKey;
@@ -498,17 +523,35 @@
                                                         <span>Checking status…</span>
                                                 </div>
                                         {/if}
-					<section class="details">
-						<h4>Message</h4>
-						<p class="message-text">
-							{entry.message?.message ?? entry.request.memo ?? 'Message details unavailable.'}
-						</p>
-					</section>
-					<section class="details">
-						<h4>Payment details</h4>
-						<dl>
-							<div>
-								<dt>Recipient</dt>
+                                        <section class="details">
+                                                <h4>Message</h4>
+                                                <p class="message-text">
+                                                        {entry.message?.message ?? entry.request.memo ?? 'Message details unavailable.'}
+                                                </p>
+                                        </section>
+                                        {#if entry.message && entry.message.responses.length > 0}
+                                                <section class="details responses" aria-live="polite">
+                                                        <h4>Replies from the group</h4>
+                                                        <ul class="responses-list">
+                                                                {#each entry.message.responses as response (response.id)}
+                                                                        <li class="response-item">
+                                                                                <header>
+                                                                                        <span class="responder">{formatResponder(response)}</span>
+                                                                                        <time datetime={response.createdAt}>
+                                                                                                {formatResponseTime(response.createdAt)}
+                                                                                        </time>
+                                                                                </header>
+                                                                                <p class="response-text">{response.text}</p>
+                                                                        </li>
+                                                                {/each}
+                                                        </ul>
+                                                </section>
+                                        {/if}
+                                        <section class="details">
+                                                <h4>Payment details</h4>
+                                                <dl>
+                                                        <div>
+                                                                <dt>Recipient</dt>
 								<dd><code>{entry.request.recipient}</code></dd>
 							</div>
 							<div>
@@ -716,16 +759,62 @@
                 }
         }
 
-	.details h4 {
-		margin: 0 0 0.5rem;
-		font-size: 1rem;
-		color: #111827;
-	}
+        .details h4 {
+                margin: 0 0 0.5rem;
+                font-size: 1rem;
+                color: #111827;
+        }
 
-	.details dl {
-		display: grid;
-		gap: 0.5rem;
-		margin: 0;
+        .responses {
+                display: grid;
+                gap: 0.75rem;
+        }
+
+        .responses-list {
+                list-style: none;
+                margin: 0;
+                padding: 0;
+                display: grid;
+                gap: 0.75rem;
+        }
+
+        .response-item {
+                background: rgba(241, 245, 249, 0.6);
+                border-radius: 0.75rem;
+                padding: 0.75rem 1rem;
+                display: grid;
+                gap: 0.35rem;
+        }
+
+        .response-item header {
+                display: flex;
+                justify-content: space-between;
+                align-items: baseline;
+                gap: 0.75rem;
+                font-size: 0.9rem;
+                color: #475569;
+        }
+
+        .responder {
+                font-weight: 600;
+                color: #1f2937;
+        }
+
+        .response-item time {
+                font-size: 0.85rem;
+                color: #64748b;
+        }
+
+        .response-text {
+                margin: 0;
+                white-space: pre-wrap;
+                color: #1f2937;
+        }
+
+        .details dl {
+                display: grid;
+                gap: 0.5rem;
+                margin: 0;
 	}
 
 	.details dt {

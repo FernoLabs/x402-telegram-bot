@@ -49,12 +49,21 @@ export interface CreateAuctionInput {
 }
 
 export interface AuctionResponse {
-	id: number;
-	auctionId: number;
-	userId: string;
-	username: string | null;
-	text: string;
-	createdAt: string;
+        id: number;
+        auctionId: number;
+        userId: string;
+        username: string | null;
+        text: string;
+        createdAt: string;
+}
+
+export interface MessageResponse {
+        id: number;
+        messageRequestId: number;
+        userId: string;
+        username: string | null;
+        text: string;
+        createdAt: string;
 }
 
 export interface PaymentDetails {
@@ -120,19 +129,20 @@ export type MessageRequestStatus =
 	| 'failed';
 
 export interface MessageRequest {
-	id: number;
-	paymentRequestId: number;
-	groupId: number;
-	walletAddress: string;
-	senderName: string | null;
-	message: string;
-	status: MessageRequestStatus;
-	lastError: string | null;
-	telegramMessageId: number | null;
-	telegramChatId: string | null;
-	sentAt: string | null;
-	createdAt: string;
-	updatedAt: string;
+        id: number;
+        paymentRequestId: number;
+        groupId: number;
+        walletAddress: string;
+        senderName: string | null;
+        message: string;
+        status: MessageRequestStatus;
+        lastError: string | null;
+        telegramMessageId: number | null;
+        telegramChatId: string | null;
+        sentAt: string | null;
+        createdAt: string;
+        updatedAt: string;
+        responses: MessageResponse[];
 }
 
 export interface MessagePaymentHistoryEntry extends PaymentHistoryEntry {

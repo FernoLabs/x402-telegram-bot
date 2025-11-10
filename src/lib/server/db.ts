@@ -1,16 +1,17 @@
 import type {
-	Auction,
-	AuctionResponse,
-	CreateAuctionInput,
-	CreateGroupInput,
-	Group,
-	MessagePaymentHistoryEntry,
-	MessageRequest,
-	MessageRequestStatus,
-	PaymentRequestRecord,
-	PaymentRequestStatus,
-	PendingPaymentRecord,
-	PendingPaymentStatus
+        Auction,
+        AuctionResponse,
+        CreateAuctionInput,
+        CreateGroupInput,
+        Group,
+        MessagePaymentHistoryEntry,
+        MessageRequest,
+        MessageRequestStatus,
+        MessageResponse,
+        PaymentRequestRecord,
+        PaymentRequestStatus,
+        PendingPaymentRecord,
+        PendingPaymentStatus
 } from '$lib/types';
 
 interface GroupRow {
@@ -43,12 +44,21 @@ interface AuctionRow {
 }
 
 interface ResponseRow {
-	id: number;
-	auction_id: number;
-	user_id: string;
-	username: string | null;
-	text: string;
-	created_at: string;
+        id: number;
+        auction_id: number;
+        user_id: string;
+        username: string | null;
+        text: string;
+        created_at: string;
+}
+
+interface MessageResponseRow {
+        id: number;
+        message_request_id: number;
+        user_id: string;
+        username: string | null;
+        text: string;
+        created_at: string;
 }
 
 interface PaymentRequestRow {
@@ -519,13 +529,13 @@ export class AuctionRepository {
 			.run();
 	}
 
-	async recordResponse(input: {
-		auctionId: number;
-		userId: string;
-		username: string | null;
-		text: string;
-	}): Promise<AuctionResponse> {
-		const result = await this.db
+        async recordResponse(input: {
+                auctionId: number;
+                userId: string;
+                username: string | null;
+                text: string;
+        }): Promise<AuctionResponse> {
+                const result = await this.db
 			.prepare(
 				`INSERT INTO responses (auction_id, user_id, username, text)
          VALUES (?, ?, ?, ?)`
@@ -551,11 +561,11 @@ export class AuctionRepository {
 			throw new Error('Failed to fetch response after insert');
 		}
 
-		return mapResponseRow(row);
-	}
+                return mapResponseRow(row);
+        }
 
-	async listResponsesForAuction(auctionId: number): Promise<AuctionResponse[]> {
-		const { results } = await this.db
+        async listResponsesForAuction(auctionId: number): Promise<AuctionResponse[]> {
+                const { results } = await this.db
 			.prepare(
 				`SELECT id, auction_id, user_id, username, text, created_at
          FROM responses
@@ -565,8 +575,57 @@ export class AuctionRepository {
 			.bind(auctionId)
 			.all<ResponseRow>();
 
-		return (results ?? []).map(mapResponseRow);
-	}
+                return (results ?? []).map(mapResponseRow);
+        }
+
+        async recordMessageResponse(input: {
+                messageRequestId: number;
+                userId: string;
+                username: string | null;
+                text: string;
+        }): Promise<MessageResponse> {
+                const result = await this.db
+                        .prepare(
+                                `INSERT INTO message_responses (message_request_id, user_id, username, text)
+         VALUES (?, ?, ?, ?)`
+                        )
+                        .bind(input.messageRequestId, input.userId, input.username, input.text)
+                        .run();
+
+                const insertedId = Number(result.meta.last_row_id ?? 0);
+                if (!Number.isFinite(insertedId) || insertedId <= 0) {
+                        throw new Error('Failed to insert message response');
+                }
+
+                const row = await this.db
+                        .prepare(
+                                `SELECT id, message_request_id, user_id, username, text, created_at
+         FROM message_responses
+         WHERE id = ?`
+                        )
+                        .bind(insertedId)
+                        .first<MessageResponseRow>();
+
+                if (!row) {
+                        throw new Error('Failed to fetch message response after insert');
+                }
+
+                return mapMessageResponseRow(row);
+        }
+
+        async listResponsesForMessageRequest(messageRequestId: number): Promise<MessageResponse[]> {
+                const { results } = await this.db
+                        .prepare(
+                                `SELECT id, message_request_id, user_id, username, text, created_at
+         FROM message_responses
+         WHERE message_request_id = ?
+         ORDER BY created_at ASC`
+                        )
+                        .bind(messageRequestId)
+                        .all<MessageResponseRow>();
+
+                return (results ?? []).map(mapMessageResponseRow);
+        }
 
 	private resolvePaymentIdentifier(candidate?: string | null): string {
 		if (candidate && candidate.trim()) {
@@ -699,12 +758,14 @@ export class AuctionRepository {
 			.bind(payment.id)
 			.first<MessageRequestRow>();
 
-		if (!row) {
-			throw new Error('Failed to fetch message request after insert');
-		}
+                if (!row) {
+                        throw new Error('Failed to fetch message request after insert');
+                }
 
-		return { payment, message: mapMessageRequestRow(row) };
-	}
+                const message = mapMessageRequestRow(row);
+                message.responses = [];
+                return { payment, message };
+        }
 
 	async getPaymentRequestById(id: number): Promise<PaymentRequestRecord | null> {
 		const row = await this.db
@@ -721,20 +782,55 @@ export class AuctionRepository {
 		return row ? mapPaymentRequestRow(row) : null;
 	}
 
-	async getPaymentRequestByPaymentId(paymentId: string): Promise<PaymentRequestRecord | null> {
-		const row = await this.db
-			.prepare(
-				`SELECT id, payment_id, nonce, group_id, amount, currency, network, recipient, memo, instructions,
+        async getPaymentRequestByPaymentId(paymentId: string): Promise<PaymentRequestRecord | null> {
+                const row = await this.db
+                        .prepare(
+                                `SELECT id, payment_id, nonce, group_id, amount, currency, network, recipient, memo, instructions,
                 resource, description, asset_address, asset_type, checkout_url, facilitator_url, status,
                 expires_at, last_signature, last_payer_address, created_at, updated_at
          FROM payment_requests
          WHERE payment_id = ?`
-			)
-			.bind(paymentId)
-			.first<PaymentRequestRow>();
+                        )
+                        .bind(paymentId)
+                        .first<PaymentRequestRow>();
 
-		return row ? mapPaymentRequestRow(row) : null;
-	}
+                return row ? mapPaymentRequestRow(row) : null;
+        }
+
+        async getMessageRequestByTelegramMessage(
+                messageId: number,
+                chatId: string
+        ): Promise<MessageRequest | null> {
+                const row = await this.db
+                        .prepare(
+                                `SELECT
+           id,
+           payment_request_id,
+           group_id,
+           wallet_address,
+           sender_name,
+           message,
+           status,
+           last_error,
+           telegram_message_id,
+           telegram_chat_id,
+           sent_at,
+           created_at,
+           updated_at
+         FROM message_requests
+         WHERE telegram_message_id = ? AND telegram_chat_id = ?`
+                        )
+                        .bind(messageId, chatId)
+                        .first<MessageRequestRow>();
+
+                if (!row) {
+                        return null;
+                }
+
+                const request = mapMessageRequestRow(row);
+                request.responses = await this.listResponsesForMessageRequest(request.id);
+                return request;
+        }
 
 	async updatePaymentRequestStatus(
 		requestId: number,
@@ -882,10 +978,10 @@ export class AuctionRepository {
 		return row ? mapPendingPaymentRow(row) : null;
 	}
 
-	async getMessageRequestByPaymentId(paymentId: string): Promise<MessageRequest | null> {
-		const row = await this.db
-			.prepare(
-				`SELECT
+        async getMessageRequestByPaymentId(paymentId: string): Promise<MessageRequest | null> {
+                const row = await this.db
+                        .prepare(
+                                `SELECT
            mr.id,
            mr.payment_request_id,
            mr.group_id,
@@ -902,17 +998,23 @@ export class AuctionRepository {
          FROM message_requests mr
          INNER JOIN payment_requests pr ON pr.id = mr.payment_request_id
          WHERE pr.payment_id = ?`
-			)
-			.bind(paymentId)
-			.first<MessageRequestRow>();
+                        )
+                        .bind(paymentId)
+                        .first<MessageRequestRow>();
 
-		return row ? mapMessageRequestRow(row) : null;
-	}
+                if (!row) {
+                        return null;
+                }
 
-	async updateMessageRequest(
-		id: number,
-		input: UpdateMessageRequestInput
-	): Promise<MessageRequest | null> {
+                const request = mapMessageRequestRow(row);
+                request.responses = await this.listResponsesForMessageRequest(request.id);
+                return request;
+        }
+
+        async updateMessageRequest(
+                id: number,
+                input: UpdateMessageRequestInput
+        ): Promise<MessageRequest | null> {
 		const assignments: string[] = [];
 		const values: unknown[] = [];
 
@@ -948,9 +1050,9 @@ export class AuctionRepository {
 			.bind(...values, id)
 			.run();
 
-		const row = await this.db
-			.prepare(
-				`SELECT
+                const row = await this.db
+                        .prepare(
+                                `SELECT
            id,
            payment_request_id,
            group_id,
@@ -966,12 +1068,18 @@ export class AuctionRepository {
            updated_at
          FROM message_requests
          WHERE id = ?`
-			)
-			.bind(id)
-			.first<MessageRequestRow>();
+                        )
+                        .bind(id)
+                        .first<MessageRequestRow>();
 
-		return row ? mapMessageRequestRow(row) : null;
-	}
+                if (!row) {
+                        return null;
+                }
+
+                const request = mapMessageRequestRow(row);
+                request.responses = await this.listResponsesForMessageRequest(request.id);
+                return request;
+        }
 
 	async listPaymentsForWallet(payerAddress: string): Promise<MessagePaymentHistoryEntry[]> {
 		const { results } = await this.db
@@ -1044,8 +1152,19 @@ export class AuctionRepository {
 			.bind(payerAddress, payerAddress, payerAddress)
 			.all<MessageJoinRow>();
 
-		return (results ?? []).map(mapMessageJoinRow);
-	}
+                const entries: MessagePaymentHistoryEntry[] = [];
+
+                for (const row of results ?? []) {
+                        const entry = mapMessageJoinRow(row);
+                        if (entry.message) {
+                                entry.message.responses = await this.listResponsesForMessageRequest(entry.message.id);
+                        }
+
+                        entries.push(entry);
+                }
+
+                return entries;
+        }
 }
 
 function mapGroupRow(row: GroupRow): Group {
@@ -1089,6 +1208,17 @@ function mapResponseRow(row: ResponseRow): AuctionResponse {
         return {
                 id: Number(row.id),
                 auctionId: Number(row.auction_id),
+                userId: row.user_id,
+                username: row.username,
+                text: row.text,
+                createdAt: row.created_at
+        };
+}
+
+function mapMessageResponseRow(row: MessageResponseRow): MessageResponse {
+        return {
+                id: Number(row.id),
+                messageRequestId: Number(row.message_request_id),
                 userId: row.user_id,
                 username: row.username,
                 text: row.text,
@@ -1154,7 +1284,8 @@ function mapMessageRequestRow(row: MessageRequestRow): MessageRequest {
                 telegramChatId: row.telegram_chat_id,
                 sentAt: row.sent_at,
                 createdAt: row.created_at,
-                updatedAt: row.updated_at
+                updatedAt: row.updated_at,
+                responses: []
         };
 }
 
@@ -1216,7 +1347,8 @@ function mapMessageJoinRow(row: MessageJoinRow): MessagePaymentHistoryEntry {
                                 telegramChatId: row.message_telegram_chat_id ?? null,
                                 sentAt: row.message_sent_at ?? null,
                                 createdAt: row.message_created_at ?? request.createdAt,
-                                updatedAt: row.message_updated_at ?? request.updatedAt
+                                updatedAt: row.message_updated_at ?? request.updatedAt,
+                                responses: []
                         }
                 : null;
 
