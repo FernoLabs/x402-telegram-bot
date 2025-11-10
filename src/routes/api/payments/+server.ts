@@ -128,7 +128,6 @@ interface SubmitPaymentPayload {
 	wireTransaction?: string;
 	signature?: string;
 	payer?: string | null;
-	resend?: boolean;
 }
 
 export const GET: RequestHandler = async ({ url, platform }) => {
@@ -258,13 +257,11 @@ export const POST: RequestHandler = async ({ request, platform }) => {
 		const submittedSignature =
 			typeof payload.signature === 'string' ? payload.signature.trim() : '';
 		const payer = typeof payload.payer === 'string' ? payload.payer.trim() : null;
-		const resend = Boolean(payload.resend);
-
 		if (!paymentId) {
 			return json({ error: 'paymentId is required' }, { status: 400 });
 		}
 
-		if (!resend && !wireTransaction && !submittedSignature) {
+		if (!wireTransaction && !submittedSignature) {
 			return json({ error: 'paymentId and a transaction payload are required' }, { status: 400 });
 		}
 
@@ -276,33 +273,6 @@ export const POST: RequestHandler = async ({ request, platform }) => {
 		}
 
 		const messageRecord = await repo.getMessageRequestByPaymentId(paymentId);
-
-		if (resend) {
-			if (!messageRecord) {
-				return json({ error: 'Message request not found for this payment' }, { status: 404 });
-			}
-
-			if (requestRecord.status !== 'confirmed') {
-				return json({ error: 'Payment is not confirmed yet' }, { status: 409 });
-			}
-
-			const delivered = await deliverTelegramMessage({
-				repo,
-				env,
-				request: requestRecord,
-				message: messageRecord,
-				signature: requestRecord.lastSignature ?? null
-			});
-
-			return json({
-				payment: {
-					request: requestRecord,
-					pending: null,
-					verification: null,
-					message: delivered ?? messageRecord
-				}
-			});
-		}
 
 		const expiresAt = Date.parse(requestRecord.expiresAt);
 		if (

@@ -370,6 +370,31 @@ export class AuctionRepository {
 		return this.getGroupByTelegramId(telegramId);
 	}
 
+	async setGroupActiveStatus(
+		telegramId: string,
+		active: boolean,
+		alternateIds: string[] = []
+	): Promise<boolean> {
+		const identifiers = collectTelegramIdentifiers(telegramId, alternateIds);
+
+		if (identifiers.length === 0) {
+			return false;
+		}
+
+		const placeholders = identifiers.map(() => '?').join(', ');
+
+		const result = await this.db
+			.prepare(
+				`UPDATE groups
+         SET active = ?
+         WHERE LOWER(REPLACE(TRIM(telegram_id), '@', '')) IN (${placeholders})`
+			)
+			.bind(active ? 1 : 0, ...identifiers)
+			.run();
+
+		return Number(result.meta.changes ?? 0) > 0;
+	}
+
 	async listAuctions(groupId?: number): Promise<Auction[]> {
 		const statement = groupId
 			? this.db.prepare(
