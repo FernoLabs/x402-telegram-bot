@@ -361,7 +361,13 @@ export async function verifySolanaPayment(
     );
     currency = 'SOL';
   } else {
-    const mint = options.tokenMintAddress ?? DEFAULT_USDC_MINT;
+    const mint =
+      options.tokenMintAddress ?? (normalizedCurrency === 'USDC' ? DEFAULT_USDC_MINT : null);
+
+    if (!mint) {
+      return null;
+    }
+
     const tokenDeltas = accumulateTokenDeltas(
       meta.preTokenBalances?.filter((balance) => balance.mint === mint),
       meta.postTokenBalances?.filter((balance) => balance.mint === mint),

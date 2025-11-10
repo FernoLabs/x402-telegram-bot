@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { AuctionRepository } from '$lib/server/db';
 import { TelegramBot } from '$lib/server/telegram';
 import type { TelegramWebhookUpdate } from '$lib/types';
+import { getStablecoinMetadata } from '$lib/stablecoins';
 
 type TelegramMessageUpdate = NonNullable<TelegramWebhookUpdate['message']>;
 type TelegramMyChatMemberUpdate = NonNullable<TelegramWebhookUpdate['my_chat_member']>;
@@ -134,7 +135,12 @@ async function handleGroupConfigCommand(
 		return true;
 	}
 
-	const walletAddress = normalizedCommand === '/setwallet' ? args.join(' ').trim() : '';
+        const configuredCurrency = (env?.PAYMENT_CURRENCY ?? 'USDC').toUpperCase();
+        const stablecoinMetadata = getStablecoinMetadata(configuredCurrency);
+        const currencyLabel = stablecoinMetadata?.symbol ?? configuredCurrency;
+        const currencyDescription = stablecoinMetadata?.name ?? currencyLabel;
+
+        const walletAddress = normalizedCommand === '/setwallet' ? args.join(' ').trim() : '';
 
 	const group = await repo.getGroupByTelegramId(chatId, alternateIdentifiers);
 
@@ -161,12 +167,12 @@ async function handleGroupConfigCommand(
 				ownerAddress: walletAddress
 			});
 
-			await bot.sendMessage({
-				chat_id: chatId,
-				text: `Registered this chat for paid posts and set the payout wallet to:\n<code>${walletAddress}</code>\n\nCurrent price per message: ${defaultMinBid.toFixed(2)} USDC\nUse /setprice to change it.`,
-				parse_mode: 'HTML',
-				reply_to_message_id: message.message_id
-			});
+                        await bot.sendMessage({
+                                chat_id: chatId,
+                                text: `Registered this chat for paid posts and set the payout wallet to:\n<code>${walletAddress}</code>\n\nCurrent price per message: ${defaultMinBid.toFixed(2)} ${currencyLabel}\nUse /setprice to change it.`,
+                                parse_mode: 'HTML',
+                                reply_to_message_id: message.message_id
+                        });
 
 			return true;
 		}
@@ -207,21 +213,21 @@ async function handleGroupConfigCommand(
 		const parsedAmount = amountArg ? Number(amountArg) : NaN;
 
 		if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
-			await bot.sendMessage({
-				chat_id: chatId,
-				text: 'Please include a positive number of USDC, for example: /setprice 0.75',
-				reply_to_message_id: message.message_id
-			});
+                        await bot.sendMessage({
+                                chat_id: chatId,
+                                text: `Please include a positive number of ${currencyDescription} (for example: /setprice 0.75)`,
+                                reply_to_message_id: message.message_id
+                        });
 			return true;
 		}
 
 		const updated = await repo.updateGroupConfig(group.telegramId, { minBid: parsedAmount });
 		if (updated) {
-			await bot.sendMessage({
-				chat_id: chatId,
-				text: `Updated price per message to ${parsedAmount.toFixed(2)} USDC.`,
-				reply_to_message_id: message.message_id
-			});
+                        await bot.sendMessage({
+                                chat_id: chatId,
+                                text: `Updated price per message to ${parsedAmount.toFixed(2)} ${currencyLabel}.`,
+                                reply_to_message_id: message.message_id
+                        });
 		}
 
 		return true;

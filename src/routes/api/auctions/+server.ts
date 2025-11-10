@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { AuctionRepository } from '$lib/server/db';
 import { parsePayment, buildPaymentRequiredResponse } from '$lib/server/x402';
 import { normalizeCommitment } from '$lib/server/solana';
+import { getSolanaMintAddressForCurrency } from '$lib/stablecoins';
 import { TelegramBot } from '$lib/server/telegram';
 
 function escapeHtml(value: string): string {
@@ -15,16 +16,17 @@ function escapeHtml(value: string): string {
 }
 
 function formatTelegramMessage(params: {
-	bidderName: string | null;
-	amount: number;
-	message: string;
-	txHash: string | null;
+        bidderName: string | null;
+        amount: number;
+        message: string;
+        txHash: string | null;
+        currency: string;
 }): string {
-	const lines = [
-		'🤖 <b>Paid AI Message</b>',
-		`<b>From:</b> ${escapeHtml(params.bidderName ?? 'Anonymous AI Agent')}`,
-		`<b>Bid:</b> $${params.amount.toFixed(2)} USDC`
-	];
+        const lines = [
+                '🤖 <b>Paid AI Message</b>',
+                `<b>From:</b> ${escapeHtml(params.bidderName ?? 'Anonymous AI Agent')}`,
+                `<b>Bid:</b> $${params.amount.toFixed(2)} ${escapeHtml(params.currency.toUpperCase())}`
+        ];
 
 	if (params.txHash) {
 		const shortHash = `${params.txHash.slice(0, 10)}…${params.txHash.slice(-8)}`;
@@ -48,7 +50,7 @@ export const GET: RequestHandler = async ({ url, platform }) => {
 			throw new Error('D1 database binding `DB` is not configured.');
 		}
 
-		const repo = new AuctionRepository(env.DB);
+                const repo = new AuctionRepository(env.DB);
 		const groupIdParam = url.searchParams.get('groupId');
 		const parsedGroupId = groupIdParam ? Number.parseInt(groupIdParam, 10) : Number.NaN;
 		const targetGroupId = Number.isNaN(parsedGroupId) ? undefined : parsedGroupId;
@@ -68,7 +70,8 @@ export const POST: RequestHandler = async ({ request, platform }) => {
 			throw new Error('D1 database binding `DB` is not configured.');
 		}
 
-		const repo = new AuctionRepository(env.DB);
+                const repo = new AuctionRepository(env.DB);
+                const envRecord = env as unknown as Record<string, unknown>;
 		const body = (await request.json()) as Partial<{
 			groupId: number;
 			message: string;
@@ -91,8 +94,8 @@ export const POST: RequestHandler = async ({ request, platform }) => {
 		const receiver = env.RECEIVER_ADDRESS ?? group.ownerAddress;
 		const currency = env.PAYMENT_CURRENCY ?? 'USDC';
 		const network = env.PAYMENT_NETWORK ?? 'solana';
-		const solanaRpcUrl = env.SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com';
-		const solanaMint = env.SOLANA_USDC_MINT_ADDRESS ?? null;
+                const solanaRpcUrl = env.SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com';
+                const solanaMint = getSolanaMintAddressForCurrency(currency, envRecord);
 		const solanaCommitment = normalizeCommitment(env.SOLANA_COMMITMENT);
 
 		const payment = await parsePayment(request, {
@@ -144,12 +147,13 @@ export const POST: RequestHandler = async ({ request, platform }) => {
 		if (env.TELEGRAM_BOT_TOKEN) {
 			try {
 				const bot = new TelegramBot(env.TELEGRAM_BOT_TOKEN);
-				const formatted = formatTelegramMessage({
-					bidderName: auction.bidderName,
-					amount: auction.amount,
-					message: auction.message,
-					txHash: auction.txHash
-				});
+                                const formatted = formatTelegramMessage({
+                                        bidderName: auction.bidderName,
+                                        amount: auction.amount,
+                                        message: auction.message,
+                                        txHash: auction.txHash,
+                                        currency
+                                });
 				const response = await bot.sendMessage({
 					chat_id: group.telegramId,
 					text: formatted,

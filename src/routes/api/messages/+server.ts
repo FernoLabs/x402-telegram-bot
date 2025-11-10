@@ -7,6 +7,7 @@ import {
         readPaymentIdentification
 } from '$lib/server/x402';
 import { DEFAULT_SOLANA_RPC_URL, normalizeCommitment } from '$lib/server/solana';
+import { getSolanaMintAddressForCurrency } from '$lib/stablecoins';
 import { deliverTelegramMessage, updateMessageStatus } from '$lib/server/messages';
 import type { MessageRequest, PaymentRequestRecord, PendingPaymentRecord } from '$lib/types';
 
@@ -50,6 +51,7 @@ export const POST: RequestHandler = async ({ request, platform }) => {
                 }
 
                 const repo = new AuctionRepository(env.DB);
+                const envRecord = env as unknown as Record<string, unknown>;
                 const group = await repo.getGroup(groupId);
 
                 if (!group) {
@@ -68,7 +70,7 @@ export const POST: RequestHandler = async ({ request, platform }) => {
                 const network = env.PAYMENT_NETWORK ?? 'solana';
                 const recipient = env.RECEIVER_ADDRESS ?? group.ownerAddress;
                 const solanaRpcUrl = env.SOLANA_RPC_URL ?? DEFAULT_SOLANA_RPC_URL;
-                const solanaMint = env.SOLANA_USDC_MINT_ADDRESS ?? null;
+                const solanaMint = getSolanaMintAddressForCurrency(currency, envRecord);
                 const solanaCommitment = normalizeCommitment(env.SOLANA_COMMITMENT);
 
                 const identifiers = readPaymentIdentification(request);

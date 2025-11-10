@@ -11,6 +11,7 @@ import { deliverTelegramMessage, updateMessageStatus } from '$lib/server/message
 import { createSolanaRpc } from '@solana/kit';
 import type { Base64EncodedWireTransaction } from '@solana/transactions';
 import type { MessageRequest, MessageRequestStatus } from '$lib/types';
+import { getSolanaMintAddressForCurrency } from '$lib/stablecoins';
 
 interface SubmitPaymentPayload {
 	paymentId?: string;
@@ -31,13 +32,13 @@ export const GET: RequestHandler = async ({ url, platform }) => {
 			return json({ error: 'wallet query parameter is required' }, { status: 400 });
 		}
 
-		const repo = new AuctionRepository(env.DB);
-		const records = await repo.listPaymentsForWallet(wallet.trim());
+                const repo = new AuctionRepository(env.DB);
+                const records = await repo.listPaymentsForWallet(wallet.trim());
 
-		const rpcUrl = env.SOLANA_RPC_URL ?? DEFAULT_SOLANA_RPC_URL;
-		const commitment = normalizeCommitment(env.SOLANA_COMMITMENT);
-		const tokenMintAddress = env.SOLANA_USDC_MINT_ADDRESS ?? null;
-		const now = Date.now();
+                const rpcUrl = env.SOLANA_RPC_URL ?? DEFAULT_SOLANA_RPC_URL;
+                const commitment = normalizeCommitment(env.SOLANA_COMMITMENT);
+                const envRecord = env as unknown as Record<string, unknown>;
+                const now = Date.now();
 
 		const enriched = [];
 
@@ -60,16 +61,20 @@ export const GET: RequestHandler = async ({ url, platform }) => {
 				}
 			}
 
-			if (
-				record.pending &&
-				record.pending.signature &&
-				(record.pending.status === 'pending' || record.pending.status === 'submitted')
-			) {
-				verification = await verifySolanaPayment({
-					signature: record.pending.signature,
-					rpcUrl,
-					recipient: record.request.recipient,
-					minAmount: record.request.amount,
+                        if (
+                                record.pending &&
+                                record.pending.signature &&
+                                (record.pending.status === 'pending' || record.pending.status === 'submitted')
+                        ) {
+                                const tokenMintAddress = getSolanaMintAddressForCurrency(
+                                        record.request.currency,
+                                        envRecord
+                                );
+                                verification = await verifySolanaPayment({
+                                        signature: record.pending.signature,
+                                        rpcUrl,
+                                        recipient: record.request.recipient,
+                                        minAmount: record.request.amount,
 					expectedCurrency: record.request.currency,
 					tokenMintAddress,
 					commitment
@@ -139,7 +144,9 @@ export const POST: RequestHandler = async ({ request, platform }) => {
 			throw new Error('D1 database binding `DB` is not configured.');
 		}
 
-		const payload = (await request.json()) as SubmitPaymentPayload;
+                const envRecord = env as unknown as Record<string, unknown>;
+
+                const payload = (await request.json()) as SubmitPaymentPayload;
 		const paymentId = typeof payload.paymentId === 'string' ? payload.paymentId.trim() : '';
 		const wireTransaction =
 			typeof payload.wireTransaction === 'string' ? payload.wireTransaction.trim() : '';
@@ -243,8 +250,11 @@ export const POST: RequestHandler = async ({ request, platform }) => {
 				await updateMessageStatus(repo, messageRecord, 'signature_saved', { lastError: null });
 			}
 
-			const commitment = normalizeCommitment(env.SOLANA_COMMITMENT);
-			const tokenMintAddress = env.SOLANA_USDC_MINT_ADDRESS ?? null;
+                        const commitment = normalizeCommitment(env.SOLANA_COMMITMENT);
+                        const tokenMintAddress = getSolanaMintAddressForCurrency(
+                                requestRecord.currency,
+                                envRecord
+                        );
 
 			const chainVerification = await verifySolanaPayment({
 				signature,
@@ -387,8 +397,11 @@ export const POST: RequestHandler = async ({ request, platform }) => {
 			await updateMessageStatus(repo, messageRecord, 'signature_saved', { lastError: null });
 		}
 
-		const commitment = normalizeCommitment(env.SOLANA_COMMITMENT);
-		const tokenMintAddress = env.SOLANA_USDC_MINT_ADDRESS ?? null;
+                const commitment = normalizeCommitment(env.SOLANA_COMMITMENT);
+                const tokenMintAddress = getSolanaMintAddressForCurrency(
+                        requestRecord.currency,
+                        envRecord
+                );
 
 		const chainVerification = await verifySolanaPayment({
 			signature,

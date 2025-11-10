@@ -16,11 +16,12 @@ export function formatTelegramMessage(params: {
         amount: number;
         message: string;
         signature: string | null;
+        currency: string;
 }): string {
         const lines = [
                 '🤖 <b>Paid Message</b>',
                 `<b>From:</b> ${escapeHtml(params.senderName ?? 'Anonymous Wallet')}`,
-                `<b>Amount:</b> $${params.amount.toFixed(2)} USDC`
+                `<b>Amount:</b> $${params.amount.toFixed(2)} ${escapeHtml(params.currency.toUpperCase())}`
         ];
 
         if (params.signature) {
@@ -83,7 +84,8 @@ export async function deliverTelegramMessage(options: {
                         senderName: current.senderName,
                         amount: request.amount,
                         message: current.message,
-                        signature
+                        signature,
+                        currency: request.currency
                 });
 
                 const response = await bot.sendMessage({

@@ -27,8 +27,13 @@
 	],
 	"vars": {
 		"TELEGRAM_WEBHOOK_URL": "https://x402-tg-auction-bot.cheron-augustin.workers.dev/api/telegram/webhook",
-		"SOLANA_RPC_URL": "https://jenifer-6iwpyb-fast-mainnet.helius-rpc.com",
-		"SOLANA_USDC_MINT_ADDRESS": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-		"SOLANA_COMMITMENT": "confirmed"
+                "SOLANA_RPC_URL": "https://jenifer-6iwpyb-fast-mainnet.helius-rpc.com",
+                "SOLANA_USDC_MINT_ADDRESS": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                "SOLANA_USDT_MINT_ADDRESS": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+                "SOLANA_CASH_MINT_ADDRESS": "CASHx9KJUStyftLFWGvEVf59SGeG9sh5FfcnZMVPCASH",
+                "SOLANA_PYUSD_MINT_ADDRESS": "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo",
+                "SOLANA_USDG_MINT_ADDRESS": "93Xc2WJDAHC4yyyZnkZSRmH1BidkFmRZ2Vqsx4zcuvYC",
+                "SOLANA_USDS_MINT_ADDRESS": "5UYTrS2FgQDACidvVPqPhxiT8vzUbScL194UvNmvTaPq",
+                "SOLANA_COMMITMENT": "confirmed"
 	}
 }

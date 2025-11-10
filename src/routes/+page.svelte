@@ -2,10 +2,11 @@
 	<header class="hero">
 		<div>
 			<h2 id="page-title">Set paid Telegram posts in minutes</h2>
-			<p>
-				Invite the payments bot to your group, choose a price per message, and accept USDC on the
-				Solana network. The console keeps setup, pricing, and delivery in one simple flow.
-			</p>
+                        <p>
+                                Invite the payments bot to your group, choose a price per message, and accept Solana
+                                stablecoins like USDC, USDT, Cash, PYUSD, USDG, USDS, or hyUSD. The console keeps setup,
+                                pricing, and delivery in one simple flow.
+                        </p>
 			<div class="hero-actions" role="group" aria-label="Primary actions">
 				<a class="action primary" href="/setup">Follow the setup guide</a>
 				<a class="action" href="/send">Send a paid message</a>
@@ -15,7 +16,7 @@
 			<h3>What you need</h3>
 			<ul>
 				<li>A Telegram group where you are an admin</li>
-				<li>USDC wallet on Solana for payouts</li>
+                                <li>Solana wallet for stablecoin payouts</li>
 				<li>Group rules for what paid messages can promote</li>
 			</ul>
 		</aside>
@@ -30,10 +31,10 @@
 			</li>
 			<li>
 				<h4>2. Pick a price</h4>
-				<p>
-					Choose the USDC amount per message. You can update the rate anytime from the group
-					directory.
-				</p>
+                                <p>
+                                        Choose the stablecoin amount per message. You can update the rate anytime from the
+                                        group directory.
+                                </p>
 			</li>
 			<li>
 				<h4>3. Share the link</h4>
@@ -48,10 +49,10 @@
 	<section class="details" aria-labelledby="details-title">
 		<div>
 			<h3 id="details-title">Built for Solana micropayments</h3>
-			<p>
-				The console guides the USDC transfer on Solana and confirms the payment before anything
-				reaches your members. Every message is logged so you can audit payouts later.
-			</p>
+                        <p>
+                                The console guides each Solana stablecoin transfer and confirms the payment before anything
+                                reaches your members. Every message is logged so you can audit payouts later.
+                        </p>
 		</div>
 		<div class="grid">
 			<article>
@@ -60,7 +61,7 @@
 			</article>
 			<article>
 				<h4>Fast confirmation</h4>
-				<p>USDC payments settle in seconds and the bot posts right after success.</p>
+                                <p>Stablecoin payments settle in seconds and the bot posts right after success.</p>
 			</article>
 			<article>
 				<h4>Group friendly</h4>
