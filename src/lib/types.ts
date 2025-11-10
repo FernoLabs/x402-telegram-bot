@@ -1,25 +1,27 @@
 export type AuctionStatus = 'pending' | 'posted' | 'failed';
 
 export interface Group {
-	id: number;
-	name: string;
-	category: string | null;
-	telegramId: string;
-	minBid: number;
-	ownerAddress: string;
-	active: boolean;
-	totalEarned: number;
+        id: number;
+        name: string;
+        category: string | null;
+        description: string | null;
+        telegramId: string;
+        minBid: number;
+        ownerAddress: string;
+        active: boolean;
+        totalEarned: number;
 	messageCount: number;
 	createdAt: string;
 }
 
 export interface CreateGroupInput {
-	name: string;
-	category?: string | null;
-	telegramId: string;
-	minBid: number;
-	ownerAddress: string;
-	active?: boolean;
+        name: string;
+        category?: string | null;
+        description?: string | null;
+        telegramId: string;
+        minBid: number;
+        ownerAddress: string;
+        active?: boolean;
 }
 
 export interface Auction {
@@ -64,6 +66,15 @@ export interface MessageResponse {
         username: string | null;
         text: string;
         createdAt: string;
+}
+
+export interface MessageRating {
+        id: number;
+        messageRequestId: number;
+        rating: number;
+        comment: string | null;
+        createdAt: string;
+        updatedAt: string;
 }
 
 export interface PaymentDetails {
@@ -143,6 +154,7 @@ export interface MessageRequest {
         createdAt: string;
         updatedAt: string;
         responses: MessageResponse[];
+        rating: MessageRating | null;
 }
 
 export interface MessagePaymentHistoryEntry extends PaymentHistoryEntry {

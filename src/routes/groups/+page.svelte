@@ -48,12 +48,17 @@
 			</thead>
 			<tbody>
 				{#each groups as group (group.id)}
-					<tr>
-						<th scope="row">{group.name}</th>
-						<td>{group.telegramId}</td>
-						<td>{formatUsd(group.minBid)}</td>
-						<td>{formatMessages(group.messageCount)}</td>
-						<td>{formatUsd(group.totalEarned)}</td>
+                                        <tr>
+                                                <th scope="row">
+                                                        <span class="group-name">{group.name}</span>
+                                                        {#if group.description}
+                                                                <p class="group-description">{group.description}</p>
+                                                        {/if}
+                                                </th>
+                                                <td>{group.telegramId}</td>
+                                                <td>{formatUsd(group.minBid)}</td>
+                                                <td>{formatMessages(group.messageCount)}</td>
+                                                <td>{formatUsd(group.totalEarned)}</td>
 						<td class="actions">
 							<a href={`/send?groupId=${group.id}`} class="action">Send message</a>
 						</td>
@@ -149,14 +154,27 @@
 		border-bottom: none;
 	}
 
-	th[scope='row'] {
-		font-weight: 600;
-		color: #111827;
-	}
+        th[scope='row'] {
+                font-weight: 600;
+                color: #111827;
+        }
 
-	.action {
-		display: inline-flex;
-		align-items: center;
+        .group-name {
+                display: block;
+                font-weight: 600;
+                color: #111827;
+        }
+
+        .group-description {
+                margin: 0.35rem 0 0;
+                color: #4b5563;
+                font-size: 0.9rem;
+                line-height: 1.4;
+        }
+
+        .action {
+                display: inline-flex;
+                align-items: center;
 		justify-content: center;
 		padding: 0.45rem 1rem;
 		border-radius: 8px;

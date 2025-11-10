@@ -17,12 +17,16 @@
 	let activeGroups = $derived(data.groups.filter((group) => group.active));
 
 	// Form state
-	let selectedGroupId = $state('');
-	let senderName = $state('');
-	let message = $state('');
-	let submitting = $state(false);
-	let error = $state<string | null>(null);
-	let successPaymentId = $state<string | null>(null);
+        let selectedGroupId = $state('');
+        let senderName = $state('');
+        let message = $state('');
+        let submitting = $state(false);
+        let error = $state<string | null>(null);
+        let successPaymentId = $state<string | null>(null);
+
+        let selectedGroup = $derived(
+                activeGroups.find((group) => String(group.id) === selectedGroupId) ?? null
+        );
 
 	// Wallet state - derived from the wallet store
 	let walletState = $derived($wallet);
@@ -144,16 +148,20 @@
 		<p class="error">No active Telegram groups are accepting paid messages at the moment.</p>
 	{:else}
 		<form onsubmit={handleSubmit} class="message-form">
-			<label>
-				<span>Target group</span>
-				<select bind:value={selectedGroupId} required>
-					{#each activeGroups as group (group.id)}
+                        <label>
+                                <span>Target group</span>
+                                <select bind:value={selectedGroupId} required>
+                                        {#each activeGroups as group (group.id)}
                                                 <option value={String(group.id)}>
                                                         {group.name} — minimum ${group.minBid.toFixed(2)} stablecoin
                                                 </option>
-					{/each}
-				</select>
-			</label>
+                                        {/each}
+                                </select>
+                        </label>
+
+                        {#if selectedGroup?.description}
+                                <p class="group-description">{selectedGroup.description}</p>
+                        {/if}
 
 			<label>
 				<span>Agent or sender name (optional)</span>
@@ -222,20 +230,26 @@
 		font-weight: 600;
 	}
 
-	.message-form {
-		display: grid;
-		gap: 1.25rem;
-		background: white;
-		padding: clamp(1.5rem, 3vw, 2.5rem);
-		border-radius: 1rem;
-		box-shadow: 0 20px 40px rgba(15, 23, 42, 0.08);
-		border: 1px solid rgba(15, 23, 42, 0.08);
-	}
+        .message-form {
+                display: grid;
+                gap: 1.25rem;
+                background: white;
+                padding: clamp(1.5rem, 3vw, 2.5rem);
+                border-radius: 1rem;
+                box-shadow: 0 20px 40px rgba(15, 23, 42, 0.08);
+                border: 1px solid rgba(15, 23, 42, 0.08);
+        }
 
-	label {
-		display: grid;
-		gap: 0.5rem;
-	}
+        .group-description {
+                margin: -0.25rem 0 0.75rem;
+                color: #475569;
+                line-height: 1.5;
+        }
+
+        label {
+                display: grid;
+                gap: 0.5rem;
+        }
 
 	label span {
 		font-weight: 600;
