@@ -1,10 +1,17 @@
 import type { PaymentDetails, PaymentRequestRecord } from '$lib/types';
 import { verifySolanaPayment, verifyWireTransactionSignature } from './solana';
+import {
+        buildSpl402Requirement,
+        parseSpl402Payment,
+        verifySpl402Payment
+} from './spl402';
 
 const AMOUNT_HEADERS = ['x-402-amount', 'x-payment-amount'];
 const SENDER_HEADERS = ['x-402-sender', 'x-payment-sender'];
 const TX_HASH_HEADERS = ['x-402-tx-hash', 'x-payment-txhash'];
 const NETWORK_HEADERS = ['x-402-network', 'x-payment-network'];
+const PAYMENT_ID_HEADERS = ['x-402-payment-id', 'x-payment-id'];
+const PAYMENT_NONCE_HEADERS = ['x-402-nonce', 'x-payment-nonce'];
 const PAYMENT_PAYLOAD_HEADER = 'x-payment';
 
 interface PaymentValidationOptions {
@@ -22,13 +29,23 @@ interface PaymentValidationOptions {
 }
 
 function readHeader(request: Request, keys: string[]): string | null {
-	for (const key of keys) {
-		const value = request.headers.get(key);
-		if (value) {
-			return value;
-		}
-	}
-	return null;
+        for (const key of keys) {
+                const value = request.headers.get(key);
+                if (value) {
+                        return value;
+                }
+        }
+        return null;
+}
+
+export function readPaymentIdentification(request: Request): {
+        paymentId: string | null;
+        nonce: string | null;
+} {
+        return {
+                paymentId: readHeader(request, PAYMENT_ID_HEADERS),
+                nonce: readHeader(request, PAYMENT_NONCE_HEADERS)
+        };
 }
 
 interface LegacyHeaderValues {
@@ -138,35 +155,83 @@ export async function parsePayment(
 		return null;
 	}
 
-	const encodedPayload = request.headers.get(PAYMENT_PAYLOAD_HEADER);
-	let payload: Record<string, unknown> | null = null;
+        const encodedPayload = request.headers.get(PAYMENT_PAYLOAD_HEADER);
+        let payload: Record<string, unknown> | null = null;
 
-	if (encodedPayload) {
-		try {
-			const normalized = encodedPayload.replace(/\s+/g, '');
-			const restored = normalized.replace(/-/g, '+').replace(/_/g, '/');
-			const padding = restored.length % 4 === 0 ? 0 : 4 - (restored.length % 4);
-			const padded = restored + '='.repeat(padding);
-			const decoded = atob(padded);
-			payload = JSON.parse(decoded) as Record<string, unknown>;
-		} catch (error) {
-			console.warn('Failed to decode x-payment payload', error);
-			payload = null;
-		}
-	}
+        if (encodedPayload) {
+                try {
+                        const trimmed = encodedPayload.trim();
+                        if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+                                payload = JSON.parse(trimmed) as Record<string, unknown>;
+                        } else {
+                                const normalized = trimmed.replace(/\s+/g, '');
+                                const restored = normalized.replace(/-/g, '+').replace(/_/g, '/');
+                                const padding = restored.length % 4 === 0 ? 0 : 4 - (restored.length % 4);
+                                const padded = restored + '='.repeat(padding);
+                                const decoded = atob(padded);
+                                payload = JSON.parse(decoded) as Record<string, unknown>;
+                        }
+                } catch (error) {
+                        console.warn('Failed to decode x-payment payload', error);
+                        payload = null;
+                }
+        }
 
-	const txHashFromPayload = payload ? extractTxHash(payload) : null;
-	const wireTransaction = payload ? extractWireTransaction(payload) : null;
-	const txHash = txHashFromPayload ?? legacy.txHash;
+        const spl402Candidate = payload
+                ? parseSpl402Payment(payload) ??
+                  (payload.payment && typeof payload.payment === 'object'
+                          ? parseSpl402Payment(payload.payment)
+                          : null)
+                : null;
+        const spl402Signature = spl402Candidate
+                ? (spl402Candidate.payload as { signature: string }).signature
+                : null;
 
-	const expectedNetwork = options.paymentDetails.network?.toLowerCase();
-	const expectedCurrency = options.paymentDetails.currency?.toUpperCase();
+        const txHashFromPayload = payload ? extractTxHash(payload) : null;
+        const wireTransaction = payload ? extractWireTransaction(payload) : null;
+        const txHash = txHashFromPayload ?? spl402Signature ?? legacy.txHash;
 
-	if (expectedNetwork === 'solana' && txHash) {
-		const senderFromPayload = payload ? extractSender(payload) : null;
-		let wireSignatureVerification: Awaited<
-			ReturnType<typeof verifyWireTransactionSignature>
-		> | null = null;
+        const expectedNetwork = options.paymentDetails.network?.toLowerCase();
+        const expectedCurrency = options.paymentDetails.currency?.toUpperCase();
+
+        if (
+                expectedNetwork === 'solana' &&
+                spl402Candidate &&
+                expectedCurrency
+        ) {
+                const spl402Verification = await verifySpl402Payment({
+                        payment: spl402Candidate,
+                        expectedRecipient: options.paymentDetails.recipient,
+                        expectedAmount: options.paymentDetails.amount,
+                        expectedCurrency,
+                        expectedNetwork: options.paymentDetails.network,
+                        solana: {
+                                rpcUrl: options.solana?.rpcUrl,
+                                tokenMintAddress: options.solana?.tokenMintAddress ?? null,
+                                commitment: options.solana?.commitment ?? 'confirmed'
+                        }
+                });
+
+                if (spl402Verification) {
+                        return {
+                                amount: spl402Verification.amount,
+                                sender: spl402Verification.sender,
+                                txHash: spl402Verification.txHash,
+                                currency: spl402Verification.currency,
+                                network: spl402Verification.network
+                        } satisfies PaymentDetails;
+                }
+        }
+
+        if (expectedNetwork === 'solana' && txHash) {
+                const senderFromPayload = spl402Candidate
+                        ? (spl402Candidate.payload as { from: string }).from
+                        : payload
+                        ? extractSender(payload)
+                        : null;
+                let wireSignatureVerification: Awaited<
+                        ReturnType<typeof verifyWireTransactionSignature>
+                > | null = null;
 
 		if (wireTransaction) {
 			wireSignatureVerification = await verifyWireTransactionSignature({
@@ -282,12 +347,20 @@ export function buildPaymentRequiredResponse(
 			? null
 			: (request.facilitatorUrl ?? extras?.facilitatorUrl ?? DEFAULT_FACILITATOR_URL);
 
-	const body: Record<string, unknown> = {
-		error: 'Payment Required',
-		amount: requiredAmount,
-		currency: currencyCode,
-		recipient: request.recipient,
-		network,
+        const spl402Requirement = buildSpl402Requirement(
+                requiredAmount,
+                request.recipient,
+                network,
+                assetType === 'spl-token' || currencyCode !== 'SOL' ? 'token-transfer' : 'transfer',
+                assetAddress
+        );
+
+        const body: Record<string, unknown> = {
+                error: 'Payment Required',
+                amount: requiredAmount,
+                currency: currencyCode,
+                recipient: request.recipient,
+                network,
 		instructions,
 		maxAmountRequired: requiredAmount,
 		currencyCode,
@@ -295,19 +368,25 @@ export function buildPaymentRequiredResponse(
 		assetAddress: assetAddress ?? undefined,
 		assetType: assetType ?? undefined,
 		networkId: network,
-		paymentId: request.paymentId,
-		nonce: request.nonce,
-		expiresAt: request.expiresAt,
-		resource,
-		description,
-		accepts: [
-			{
-				scheme: 'onchain-transfer',
-				networkId: network,
-				currencyCode,
-				amount: requiredAmount,
-				recipient: request.recipient,
-				assetAddress: assetAddress ?? undefined,
+                paymentId: request.paymentId,
+                nonce: request.nonce,
+                expiresAt: request.expiresAt,
+                resource,
+                description,
+                paymentRequirement: spl402Requirement,
+                spl402: {
+                        version: 1,
+                        requirement: spl402Requirement
+                },
+                accepts: [
+                        {
+                                scheme: 'onchain-transfer',
+                                paymentScheme: spl402Requirement.scheme,
+                                networkId: network,
+                                currencyCode,
+                                amount: requiredAmount,
+                                recipient: request.recipient,
+                                assetAddress: assetAddress ?? undefined,
 				assetType: assetType ?? undefined,
 				memo: memo ?? undefined
 			}
@@ -323,19 +402,20 @@ export function buildPaymentRequiredResponse(
 	}
 
 	if (facilitatorUrl) {
-		body.facilitator = facilitatorUrl;
-	}
+                body.facilitator = facilitatorUrl;
+        }
 
-	if (memo) {
-		body.memo = memo;
-	}
+        if (memo) {
+                body.memo = memo;
+        }
 
-	const headers: Record<string, string> = {
-		'content-type': 'application/json',
-		'x-payment-required': 'true',
-		'x-payment-amount': requiredAmount.toString(),
-		'x-payment-currency': currencyCode,
-		'x-payment-recipient': request.recipient,
+        const headers: Record<string, string> = {
+                'content-type': 'application/json',
+                'x-payment-required': JSON.stringify(spl402Requirement),
+                'x-payment-required-flag': 'true',
+                'x-payment-amount': requiredAmount.toString(),
+                'x-payment-currency': currencyCode,
+                'x-payment-recipient': request.recipient,
 		'x-payment-network': network,
 		'x-402-required': 'true',
 		'x-402-amount': requiredAmount.toString(),
