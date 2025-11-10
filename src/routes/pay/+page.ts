@@ -24,9 +24,9 @@ const parseAmount = (value: string | null): number => {
 	return parsed;
 };
 
-export const load: PageLoad = ({ url }) => {
-	const amount = parseAmount(url.searchParams.get('amount'));
-	const recipient = sanitize(url.searchParams.get('recipient'));
+export const load = (({ url }) => {
+        const amount = parseAmount(url.searchParams.get('amount'));
+        const recipient = sanitize(url.searchParams.get('recipient'));
 
 	if (!recipient) {
 		throw error(400, 'Missing payment recipient.');
@@ -42,19 +42,19 @@ export const load: PageLoad = ({ url }) => {
 	const nonce = sanitize(url.searchParams.get('nonce'));
 	const expiresAt = sanitize(url.searchParams.get('expiresAt'));
 
-	return {
-		payment: {
-			amount,
-			recipient,
-			currency,
-			network,
-			group,
-			memo,
-			checkout,
-			facilitator,
-			paymentId,
-			nonce,
-			expiresAt
-		}
-	};
-};
+        return {
+                payment: {
+                        amount,
+                        recipient,
+                        currency,
+                        network,
+                        group,
+                        memo,
+                        checkout,
+                        facilitator,
+                        paymentId,
+                        nonce,
+                        expiresAt
+                }
+        };
+}) satisfies PageLoad;

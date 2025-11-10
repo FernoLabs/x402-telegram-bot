@@ -1,14 +1,14 @@
 <script lang="ts">
-	import type { PageData } from './$types';
+        import type { PageData } from './$types';
 
-	export let data: PageData;
+        let { data } = $props<{ data: PageData }>();
 
-	const formatAmount = (amount: number, currency: string) => {
-		if (currency.toUpperCase() === 'USD') {
-			return new Intl.NumberFormat('en-US', {
-				style: 'currency',
-				currency: 'USD',
-				minimumFractionDigits: 2,
+        const formatAmount = (amount: number, currency: string) => {
+                if (currency.toUpperCase() === 'USD') {
+                        return new Intl.NumberFormat('en-US', {
+                                style: 'currency',
+                                currency: 'USD',
+                                minimumFractionDigits: 2,
 				maximumFractionDigits: 2
 			}).format(amount);
 		}
@@ -35,12 +35,12 @@
 		});
 	};
 
-	const buildFallbackCheckoutUrl = () => {
-		const url = new URL('https://facilitator.payai.network/pay');
-		url.searchParams.set('amount', data.payment.amount.toString());
-		url.searchParams.set('recipient', data.payment.recipient);
-		url.searchParams.set('currency', data.payment.currency);
-		url.searchParams.set('network', data.payment.network);
+        const buildFallbackCheckoutUrl = () => {
+                const url = new URL('https://facilitator.payai.network/pay');
+                url.searchParams.set('amount', data.payment.amount.toString());
+                url.searchParams.set('recipient', data.payment.recipient);
+                url.searchParams.set('currency', data.payment.currency);
+                url.searchParams.set('network', data.payment.network);
 
 		if (data.payment.group) {
 			url.searchParams.set('group', data.payment.group);
@@ -62,12 +62,12 @@
 			url.searchParams.set('nonce', data.payment.nonce);
 		}
 
-		return url.toString();
-	};
+                return url.toString();
+        };
 
-	$: checkoutUrl = data.payment.checkout ?? buildFallbackCheckoutUrl();
-	$: facilitatorUrl = data.payment.facilitator ?? null;
-	$: expiresAtDisplay = formatExpiration(data.payment.expiresAt ?? null);
+        const checkoutUrl = $derived(data.payment.checkout ?? buildFallbackCheckoutUrl());
+        const facilitatorUrl = $derived(data.payment.facilitator ?? null);
+        const expiresAtDisplay = $derived(formatExpiration(data.payment.expiresAt ?? null));
 </script>
 
 <svelte:head>

@@ -16,20 +16,20 @@ function parseGroupId(param: string | null): number | null {
 	return Number.isNaN(parsed) ? null : parsed;
 }
 
-export const load: PageLoad<SendPageData> = async ({ fetch, url }) => {
-	const requestedGroupId = parseGroupId(url.searchParams.get('groupId'));
+export const load = (async ({ fetch, url }) => {
+        const requestedGroupId = parseGroupId(url.searchParams.get('groupId'));
 
-	try {
-		const response = await fetch('/api/groups');
-		if (!response.ok) {
-			console.error('Failed to fetch groups', response.status, response.statusText);
-			return { groups: [], loadError: true, preselectedGroupId: requestedGroupId };
-		}
+        try {
+                const response = await fetch('/api/groups');
+                if (!response.ok) {
+                        console.error('Failed to fetch groups', response.status, response.statusText);
+                        return { groups: [], loadError: true, preselectedGroupId: requestedGroupId };
+                }
 
-		const groups = (await response.json()) as Group[];
-		return { groups, loadError: false, preselectedGroupId: requestedGroupId };
-	} catch (error) {
-		console.error('Error loading groups', error);
-		return { groups: [], loadError: true, preselectedGroupId: requestedGroupId };
-	}
-};
+                const groups = (await response.json()) as Group[];
+                return { groups, loadError: false, preselectedGroupId: requestedGroupId };
+        } catch (error) {
+                console.error('Error loading groups', error);
+                return { groups: [], loadError: true, preselectedGroupId: requestedGroupId };
+        }
+}) satisfies PageLoad<SendPageData>;
