@@ -1,20 +1,20 @@
 <script lang="ts">
-	import type { Group } from '$lib/types';
+        import type { Group } from '$lib/types';
 
-	export let data: { groups: Group[]; loadError: boolean };
+        let { data } = $props<{ data: { groups: Group[]; loadError: boolean } }>();
 
-	const currencyFormatter = new Intl.NumberFormat('en-US', {
-		style: 'currency',
-		currency: 'USD',
-		minimumFractionDigits: 2,
-		maximumFractionDigits: 2
-	});
-	const numberFormatter = new Intl.NumberFormat('en-US');
+        const currencyFormatter = new Intl.NumberFormat('en-US', {
+                style: 'currency',
+                currency: 'USD',
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+        });
+        const numberFormatter = new Intl.NumberFormat('en-US');
 
-	const groups = data.groups.filter((group) => group.active);
+        const groups = $derived(data.groups.filter((group: Group) => group.active));
 
-	const formatUsd = (value: number) => currencyFormatter.format(value);
-	const formatMessages = (count: number) => numberFormatter.format(count);
+        const formatUsd = (value: number) => currencyFormatter.format(value);
+        const formatMessages = (count: number) => numberFormatter.format(count);
 </script>
 
 <section class="page" aria-labelledby="groups-title">
