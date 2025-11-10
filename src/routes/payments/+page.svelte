@@ -205,7 +205,7 @@
 				return {
 					label: 'Payment confirmed',
 					tone: 'info',
-					description: 'Payment was confirmed on-chain. You can resend the message if needed.'
+					description: 'Payment was confirmed on-chain.'
 				};
 			case 'sent':
 				return {
@@ -241,12 +241,8 @@
                 return entry.message?.status === 'signature_saved' && entry.request.status !== 'confirmed';
         }
 
-	function canResend(entry: MessagePaymentHistoryEntry): boolean {
-		return entry.request.status === 'confirmed';
-	}
-
-	async function submitPayment(payload: Record<string, unknown>) {
-		const response = await fetch('/api/payments', {
+        async function submitPayment(payload: Record<string, unknown>) {
+                const response = await fetch('/api/payments', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify(payload)
@@ -439,24 +435,9 @@
 		}
 	}
 
-	async function resendMessage(entry: MessagePaymentHistoryEntry) {
-		try {
-			setAction(entry.request.paymentId, 'Resending message…');
-			await submitPayment({
-				paymentId: entry.request.paymentId,
-				resend: true
-			});
-			setAction(entry.request.paymentId, 'Resend requested.');
-			await loadPayments(true);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : 'Unable to resend the message.';
-			setAction(entry.request.paymentId, null, message);
-		}
-	}
-
-	function actionBusy(entry: MessagePaymentHistoryEntry): boolean {
-		return Boolean(actionStatus[entry.request.paymentId]);
-	}
+        function actionBusy(entry: MessagePaymentHistoryEntry): boolean {
+                return Boolean(actionStatus[entry.request.paymentId]);
+        }
 
 	async function refreshAll() {
 		if (!walletAddress) {
@@ -475,7 +456,7 @@
 <article class="payments-page">
 	<header>
 		<h2>Payment requests</h2>
-		<p>Track your pending messages, complete payments, and resend deliveries.</p>
+                <p>Track your pending messages and complete payments.</p>
 		<div class="actions">
 			<button type="button" on:click={refreshAll} disabled={refreshing || !walletAddress}>
 				{#if refreshing}
@@ -573,16 +554,7 @@
 								Check status
 							</button>
 						{/if}
-						{#if canResend(entry)}
-							<button
-								type="button"
-								on:click={() => resendMessage(entry)}
-								disabled={actionBusy(entry)}
-							>
-								Resend message
-							</button>
-						{/if}
-					</div>
+                                        </div>
 					{#if actionStatus[entry.request.paymentId]}
 						<p class="action-status">{actionStatus[entry.request.paymentId]}</p>
 					{/if}

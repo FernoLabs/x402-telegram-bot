@@ -161,4 +161,17 @@ export interface TelegramWebhookUpdate {
 		reply_to_message?: { message_id: number };
 		from?: TelegramUser;
 	};
+	my_chat_member?: {
+		chat: TelegramChat;
+		from?: TelegramUser;
+		date?: number;
+		old_chat_member?: {
+			status?: 'creator' | 'administrator' | 'member' | 'restricted' | 'left' | 'kicked';
+			user?: TelegramUser;
+		};
+		new_chat_member?: {
+			status?: 'creator' | 'administrator' | 'member' | 'restricted' | 'left' | 'kicked';
+			user?: TelegramUser;
+		};
+	};
 }

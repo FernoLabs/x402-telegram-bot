@@ -5,6 +5,7 @@ import { TelegramBot } from '$lib/server/telegram';
 import type { TelegramWebhookUpdate } from '$lib/types';
 
 type TelegramMessageUpdate = NonNullable<TelegramWebhookUpdate['message']>;
+type TelegramMyChatMemberUpdate = NonNullable<TelegramWebhookUpdate['my_chat_member']>;
 
 export const POST: RequestHandler = async ({ request, platform }) => {
 	try {
@@ -23,10 +24,16 @@ export const POST: RequestHandler = async ({ request, platform }) => {
 		const payload = (await request.json()) as TelegramWebhookUpdate;
 		const repo = new AuctionRepository(env.DB);
 
-		const message = payload.message;
-		if (!message) {
-			return json({ ok: true });
-		}
+                const membershipUpdate = payload.my_chat_member;
+                if (membershipUpdate) {
+                        await handleBotMembershipChange(membershipUpdate, env, repo);
+                        return json({ ok: true });
+                }
+
+                const message = payload.message;
+                if (!message) {
+                        return json({ ok: true });
+                }
 
 		const senderId = message.from?.id ? String(message.from.id) : null;
 		if (senderId && env.TELEGRAM_BOT_ID && senderId === String(env.TELEGRAM_BOT_ID)) {
@@ -221,6 +228,46 @@ async function handleGroupConfigCommand(
 	}
 
 	return false;
+}
+
+
+async function handleBotMembershipChange(
+	update: TelegramMyChatMemberUpdate,
+	env: Env | undefined,
+	repo: AuctionRepository
+): Promise<void> {
+	const botId = env?.TELEGRAM_BOT_ID ? String(env.TELEGRAM_BOT_ID) : null;
+	const newMember = update.new_chat_member;
+	const memberId = newMember?.user?.id ? String(newMember.user.id) : null;
+
+	if (botId && memberId && memberId !== botId) {
+		return;
+	}
+
+	const status = newMember?.status;
+	if (!status) {
+		return;
+	}
+
+	const chatId = String(update.chat.id);
+	const alternateIdentifiers: string[] = [];
+	const chatUsername = update.chat.username;
+
+	if (chatUsername) {
+		const normalizedUsername = normalizeHandle(chatUsername);
+		if (normalizedUsername) {
+			alternateIdentifiers.push(chatUsername, normalizedUsername, `@${normalizedUsername}`);
+		}
+	}
+
+	if (status === 'member' || status === 'administrator') {
+		await repo.setGroupActiveStatus(chatId, true, alternateIdentifiers);
+		return;
+	}
+
+	if (status === 'left' || status === 'kicked' || status === 'restricted') {
+		await repo.setGroupActiveStatus(chatId, false, alternateIdentifiers);
+	}
 }
 
 function normalizeHandle(handle?: string | null): string | null {
