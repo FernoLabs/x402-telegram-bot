@@ -1,12 +1,17 @@
 <script lang="ts">
-        import { onDestroy } from 'svelte';
-	import { PUBLIC_SOLANA_RPC_ENDPOINT } from '$lib/config';
-	import { wallet } from '$lib/wallet/wallet.svelte';
+        import { onDestroy, onMount } from 'svelte';
+        import { PUBLIC_SOLANA_RPC_ENDPOINT } from '$lib/config';
+        import { wallet } from '$lib/wallet/wallet.svelte';
         import type { MessagePaymentHistoryEntry, MessageRating, MessageResponse } from '$lib/types';
-	import {
-		address,
-		appendTransactionMessageInstructions,
-		compileTransaction,
+        import {
+                SUPPORTED_STABLECOINS,
+                getStablecoinMetadata,
+                type StablecoinMetadata
+        } from '$lib/stablecoins';
+        import {
+                address,
+                appendTransactionMessageInstructions,
+                compileTransaction,
 		createNoopSigner,
 		createSolanaRpc,
 		createTransactionMessage,
@@ -28,13 +33,17 @@
 	import { getTransferSolInstruction } from '@solana-program/system';
 	import { getAddMemoInstruction } from '@solana-program/memo';
 
-	const LAMPORT_DECIMALS = 9;
-	const USD_DECIMALS = 6;
+        const LAMPORT_DECIMALS = 9;
+        const USD_DECIMALS = 6;
+        const AVAILABLE_STABLECOINS: StablecoinMetadata[] = SUPPORTED_STABLECOINS.filter(
+                (coin) => Boolean(coin.defaultMint) && Boolean(coin.logoUrl)
+        );
+        const FALLBACK_STABLECOIN_CODE = AVAILABLE_STABLECOINS[0]?.code ?? 'USDC';
 
-	interface PaymentsResponse {
-		payments?: MessagePaymentHistoryEntry[];
-		error?: string;
-	}
+        interface PaymentsResponse {
+                payments?: MessagePaymentHistoryEntry[];
+                error?: string;
+        }
 
         interface SubmitPaymentResponse {
                 payment?: MessagePaymentHistoryEntry;
@@ -64,6 +73,8 @@
         let verificationInterval: ReturnType<typeof setInterval> | null = null;
         let verificationRequestInFlight = false;
         let ratingForms: Record<number, RatingFormState> = {};
+        let selectedStablecoins: Record<string, string> = {};
+        let openStablecoinMenu: string | null = null;
 
         const responseTimeFormatter = new Intl.DateTimeFormat('en-US', {
                 dateStyle: 'medium',
@@ -90,6 +101,56 @@
                 return responseTimeFormatter.format(date);
         }
 
+        function resolveDefaultStablecoin(
+                _paymentId: string,
+                entry: MessagePaymentHistoryEntry
+        ): string {
+                const requestCurrency = entry.request.currency?.toUpperCase() ?? null;
+                if (requestCurrency) {
+                        const supported = AVAILABLE_STABLECOINS.find((coin) => coin.code === requestCurrency);
+                        if (supported) {
+                                return supported.code;
+                        }
+                }
+
+                return FALLBACK_STABLECOIN_CODE;
+        }
+
+        function getSelectedCurrency(entry: MessagePaymentHistoryEntry): string {
+                const paymentId = entry.request.paymentId;
+                const selected = selectedStablecoins[paymentId];
+                const normalized = selected?.toUpperCase() ?? '';
+
+                if (normalized && AVAILABLE_STABLECOINS.some((coin) => coin.code === normalized)) {
+                        return normalized;
+                }
+
+                const requestCurrency = entry.request.currency?.toUpperCase() ?? null;
+                if (requestCurrency && AVAILABLE_STABLECOINS.some((coin) => coin.code === requestCurrency)) {
+                        return requestCurrency;
+                }
+
+                if (AVAILABLE_STABLECOINS.some((coin) => coin.code === FALLBACK_STABLECOIN_CODE)) {
+                        return FALLBACK_STABLECOIN_CODE;
+                }
+
+                return requestCurrency ?? 'USDC';
+        }
+
+        function getSelectedStablecoin(entry: MessagePaymentHistoryEntry): StablecoinMetadata | null {
+                const currency = getSelectedCurrency(entry);
+                return getStablecoinMetadata(currency);
+        }
+
+        function toggleStablecoinMenu(paymentId: string) {
+                openStablecoinMenu = openStablecoinMenu === paymentId ? null : paymentId;
+        }
+
+        function selectStablecoin(paymentId: string, code: string) {
+                selectedStablecoins = { ...selectedStablecoins, [paymentId]: code };
+                openStablecoinMenu = null;
+        }
+
         $: walletState = $wallet;
         $: walletAddress = walletState.publicKey;
         $: awaitingSignatureVerification = payments.some(
@@ -108,6 +169,33 @@
         onDestroy(() => {
                 payments = [];
                 stopVerificationPolling();
+        });
+
+        onMount(() => {
+                const handleClick = (event: MouseEvent) => {
+                        if (!openStablecoinMenu) {
+                                return;
+                        }
+
+                        const target = event.target instanceof HTMLElement ? event.target : null;
+                        if (!target?.closest(`[data-stablecoin-menu="${openStablecoinMenu}"]`)) {
+                                openStablecoinMenu = null;
+                        }
+                };
+
+                const handleKeydown = (event: KeyboardEvent) => {
+                        if (event.key === 'Escape') {
+                                openStablecoinMenu = null;
+                        }
+                };
+
+                window.addEventListener('click', handleClick);
+                window.addEventListener('keydown', handleKeydown);
+
+                return () => {
+                        window.removeEventListener('click', handleClick);
+                        window.removeEventListener('keydown', handleKeydown);
+                };
         });
 
         $: {
@@ -154,6 +242,31 @@
                         }
                 } else {
                         stopVerificationPolling();
+                }
+        }
+
+        $: {
+                const nextSelections: Record<string, string> = { ...selectedStablecoins };
+                const validIds = new Set(payments.map((entry) => entry.request.paymentId));
+                let changed = false;
+
+                for (const existingId of Object.keys(nextSelections)) {
+                        if (!validIds.has(existingId)) {
+                                delete nextSelections[existingId];
+                                changed = true;
+                        }
+                }
+
+                for (const entry of payments) {
+                        const paymentId = entry.request.paymentId;
+                        if (!nextSelections[paymentId]) {
+                                nextSelections[paymentId] = resolveDefaultStablecoin(paymentId, entry);
+                                changed = true;
+                        }
+                }
+
+                if (changed) {
+                        selectedStablecoins = nextSelections;
                 }
         }
 
@@ -477,12 +590,15 @@
 		return data?.payment;
 	}
 
-	async function buildPaymentTransaction(entry: MessagePaymentHistoryEntry) {
-		if (!walletAddress) {
-			throw new Error('Connect your wallet to pay.');
-		}
+        async function buildPaymentTransaction(
+                entry: MessagePaymentHistoryEntry,
+                currencyOverride: string
+        ) {
+                if (!walletAddress) {
+                        throw new Error('Connect your wallet to pay.');
+                }
 
-		const amount = entry.request.amount;
+                const amount = entry.request.amount;
 		if (!Number.isFinite(amount) || amount <= 0) {
 			throw new Error('The payment amount is invalid.');
 		}
@@ -495,33 +611,39 @@
 		const rpcEndpoint = PUBLIC_SOLANA_RPC_ENDPOINT;
 		const rpc = createSolanaRpc(rpcEndpoint);
 		const payerAddress = address(walletAddress as Address);
-		const payerSigner = createNoopSigner(payerAddress);
-		const { value: latestBlockhash } = await rpc
-			.getLatestBlockhash({ commitment: 'processed' })
-			.send();
+                const payerSigner = createNoopSigner(payerAddress);
+                const { value: latestBlockhash } = await rpc
+                        .getLatestBlockhash({ commitment: 'processed' })
+                        .send();
 
-		const instructions: Instruction[] = [];
-		const currency = entry.request.currency?.toUpperCase() ?? 'USDC';
+                const instructions: Instruction[] = [];
+                const requestCurrency = entry.request.currency?.toUpperCase() ?? null;
+                const normalizedOverride = currencyOverride?.toUpperCase() ?? '';
+                const currency = normalizedOverride || requestCurrency || 'USDC';
 
-		if (currency === 'SOL') {
-			const lamportsValue = toBaseUnits(amount, LAMPORT_DECIMALS);
-			if (lamportsValue <= 0n) {
-				throw new Error('The SOL amount is too small to transfer.');
-			}
+                if (currency === 'SOL') {
+                        const lamportsValue = toBaseUnits(amount, LAMPORT_DECIMALS);
+                        if (lamportsValue <= 0n) {
+                                throw new Error('The SOL amount is too small to transfer.');
+                        }
 
-			const transferInstruction = getTransferSolInstruction({
-				source: payerSigner,
-				destination: address(recipient),
-				amount: lamports(lamportsValue)
-			});
-			instructions.push(transferInstruction);
-		} else {
-			const mintAddress = entry.request.assetAddress;
-			if (!mintAddress) {
-				throw new Error('Missing token mint address for this payment.');
-			}
+                        const transferInstruction = getTransferSolInstruction({
+                                source: payerSigner,
+                                destination: address(recipient),
+                                amount: lamports(lamportsValue)
+                        });
+                        instructions.push(transferInstruction);
+                } else {
+                        const stablecoin = getStablecoinMetadata(currency);
+                        const mintAddress =
+                                currency === requestCurrency
+                                        ? entry.request.assetAddress ?? stablecoin?.defaultMint ?? null
+                                        : stablecoin?.defaultMint ?? null;
+                        if (!mintAddress) {
+                                throw new Error('Missing token mint address for this payment.');
+                        }
 
-			const mint = address(mintAddress);
+                        const mint = address(mintAddress);
 			const recipientAddress = address(recipient);
 			const payerAta = await findAssociatedTokenPda({
 				owner: payerAddress,
@@ -565,12 +687,13 @@
 				);
 			}
 
-			const mintInfo = await fetchMint(rpc, mint).catch(() => null);
-			const decimals = mintInfo?.data.decimals ?? USD_DECIMALS;
-			const baseUnits = toBaseUnits(amount, decimals);
-			if (baseUnits <= 0n) {
-				throw new Error('The token amount is too small to transfer.');
-			}
+                        const mintInfo = await fetchMint(rpc, mint).catch(() => null);
+                        const decimals =
+                                mintInfo?.data.decimals ?? stablecoin?.decimals ?? USD_DECIMALS;
+                        const baseUnits = toBaseUnits(amount, decimals);
+                        if (baseUnits <= 0n) {
+                                throw new Error('The token amount is too small to transfer.');
+                        }
 
 			instructions.push(
 				getTransferInstruction({
@@ -597,58 +720,63 @@
 		return { transaction };
 	}
 
-	async function payWithWallet(entry: MessagePaymentHistoryEntry) {
-		if (!walletAddress) {
-			setAction(entry.request.paymentId, null, 'Connect your wallet first.');
-			return;
-		}
+        async function payWithWallet(entry: MessagePaymentHistoryEntry) {
+                if (!walletAddress) {
+                        setAction(entry.request.paymentId, null, 'Connect your wallet first.');
+                        return;
+                }
 
-		if (!canPay(entry)) {
-			setAction(entry.request.paymentId, null, 'This payment cannot be paid right now.');
-			return;
-		}
+                if (!canPay(entry)) {
+                        setAction(entry.request.paymentId, null, 'This payment cannot be paid right now.');
+                        return;
+                }
 
-		try {
-			setAction(entry.request.paymentId, 'Awaiting wallet signature…', null);
-			const { transaction } = await buildPaymentTransaction(entry);
-			const signed = await wallet.signTransaction(transaction);
-			setAction(entry.request.paymentId, 'Submitting transaction…');
+                try {
+                        setAction(entry.request.paymentId, 'Awaiting wallet signature…', null);
+                        const currency = getSelectedCurrency(entry);
+                        const { transaction } = await buildPaymentTransaction(entry, currency);
+                        const signed = await wallet.signTransaction(transaction);
+                        setAction(entry.request.paymentId, 'Submitting transaction…');
 
-			await submitPayment({
-				paymentId: entry.request.paymentId,
-				wireTransaction: signed.wireTransaction,
-				signature: signed.signature,
-				payer: signed.payer
-			});
+                        await submitPayment({
+                                paymentId: entry.request.paymentId,
+                                wireTransaction: signed.wireTransaction,
+                                signature: signed.signature,
+                                payer: signed.payer,
+                                currency
+                        });
 
-			setAction(entry.request.paymentId, 'Transaction submitted. Waiting for confirmation…');
-			await loadPayments(true);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : 'Wallet payment failed.';
-			setAction(entry.request.paymentId, null, message);
-		}
+                        setAction(entry.request.paymentId, 'Transaction submitted. Waiting for confirmation…');
+                        openStablecoinMenu = null;
+                        await loadPayments(true);
+                } catch (error) {
+                        const message = error instanceof Error ? error.message : 'Wallet payment failed.';
+                        setAction(entry.request.paymentId, null, message);
+                }
 	}
 
-	async function verifySignature(entry: MessagePaymentHistoryEntry) {
-		const signature = entry.pending?.signature ?? entry.request.lastSignature;
-		if (!signature) {
-			setAction(entry.request.paymentId, null, 'No signature available to verify.');
-			return;
+        async function verifySignature(entry: MessagePaymentHistoryEntry) {
+                const signature = entry.pending?.signature ?? entry.request.lastSignature;
+                if (!signature) {
+                        setAction(entry.request.paymentId, null, 'No signature available to verify.');
+                        return;
 		}
 
-		try {
-			setAction(entry.request.paymentId, 'Verifying payment…');
-			await submitPayment({
-				paymentId: entry.request.paymentId,
-				signature,
-				payer: walletAddress ?? undefined
-			});
-			setAction(entry.request.paymentId, 'Verification submitted.');
-			await loadPayments(true);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : 'Verification failed.';
-			setAction(entry.request.paymentId, null, message);
-		}
+                try {
+                        setAction(entry.request.paymentId, 'Verifying payment…');
+                        await submitPayment({
+                                paymentId: entry.request.paymentId,
+                                signature,
+                                payer: walletAddress ?? undefined,
+                                currency: getSelectedCurrency(entry)
+                        });
+                        setAction(entry.request.paymentId, 'Verification submitted.');
+                        openStablecoinMenu = null;
+                        await loadPayments(true);
+                } catch (error) {
+                        const message = error instanceof Error ? error.message : 'Verification failed.';
+                        setAction(entry.request.paymentId, null, message);
+                }
 	}
 
         function actionBusy(entry: MessagePaymentHistoryEntry): boolean {
@@ -838,21 +966,104 @@
 								</div>
 							{/if}
 						</dl>
-					</section>
-					<div class="card-actions">
-						{#if canPay(entry)}
-							<button
-								type="button"
-								on:click={() => payWithWallet(entry)}
-								disabled={actionBusy(entry)}
-							>
-								Pay with wallet
-							</button>
-						{/if}
-						{#if canVerify(entry)}
-							<button
-								type="button"
-								on:click={() => verifySignature(entry)}
+                                        </section>
+                                        <div class="card-actions">
+                                                {#if canPay(entry)}
+                                                        {@const selectedCurrency = getSelectedCurrency(entry)}
+                                                        {@const selectedCoin = getSelectedStablecoin(entry)}
+                                                        {#if AVAILABLE_STABLECOINS.length > 0}
+                                                                <div
+                                                                        class="stablecoin-picker"
+                                                                        data-stablecoin-menu={entry.request.paymentId}
+                                                                >
+                                                                        <button
+                                                                                type="button"
+                                                                                class="stablecoin-trigger"
+                                                                                aria-haspopup="listbox"
+                                                                                aria-expanded={openStablecoinMenu ===
+                                                                                        entry.request.paymentId}
+                                                                                on:click|stopPropagation={() =>
+                                                                                        toggleStablecoinMenu(
+                                                                                                entry.request.paymentId
+                                                                                        )
+                                                                                }
+                                                                        >
+                                                                                {#if selectedCoin?.logoUrl}
+                                                                                        <img
+                                                                                                class="stablecoin-icon"
+                                                                                                src={selectedCoin.logoUrl}
+                                                                                                alt={`${selectedCoin.symbol} logo`}
+                                                                                        />
+                                                                                {:else}
+                                                                                        <span class="stablecoin-placeholder"
+                                                                                                >{selectedCurrency.slice(0, 1)}</span
+                                                                                        >
+                                                                                {/if}
+                                                                                <span class="stablecoin-text">
+                                                                                        {selectedCoin
+                                                                                                ? `${selectedCoin.symbol}`
+                                                                                                : selectedCurrency}
+                                                                                </span>
+                                                                                <span
+                                                                                        class="stablecoin-chevron"
+                                                                                        aria-hidden="true"
+                                                                                >
+                                                                                        ▾
+                                                                                </span>
+                                                                        </button>
+                                                                        {#if openStablecoinMenu === entry.request.paymentId}
+                                                                                <ul
+                                                                                        class="stablecoin-menu"
+                                                                                        role="listbox"
+                                                                                        aria-label="Choose stablecoin"
+                                                                                >
+                                                                                        {#each AVAILABLE_STABLECOINS as coin}
+                                                                                                <li>
+                                                                                                        <button
+                                                                                                                type="button"
+                                                                                                                class:active={selectedCurrency ===
+                                                                                                                        coin.code}
+                                                                                                                role="option"
+                                                                                                                aria-selected={selectedCurrency ===
+                                                                                                                        coin.code}
+                                                                                                                on:click|stopPropagation={() =>
+                                                                                                                        selectStablecoin(
+                                                                                                                                entry.request
+                                                                                                                                        .paymentId,
+                                                                                                                                coin.code
+                                                                                                                        )
+                                                                                                                }
+                                                                                                        >
+                                                                                                                {#if coin.logoUrl}
+                                                                                                                        <img
+                                                                                                                                class="stablecoin-icon"
+                                                                                                                                src={coin.logoUrl}
+                                                                                                                                alt={`${coin.symbol} logo`}
+                                                                                                                        />
+                                                                                                                {/if}
+                                                                                                                <span class="stablecoin-option-text">
+                                                                                                                        <strong>{coin.symbol}</strong>
+                                                                                                                        <small>{coin.name}</small>
+                                                                                                                </span>
+                                                                                                        </button>
+                                                                                                </li>
+                                                                                        {/each}
+                                                                                </ul>
+                                                                        {/if}
+                                                                </div>
+                                                        {/if}
+                                                        <button
+                                                                type="button"
+                                                                on:click={() => payWithWallet(entry)}
+                                                                disabled={actionBusy(entry)}
+                                                        >
+                                                                Pay with wallet
+                                                        </button>
+                                                {/if}
+                                                {#if canVerify(entry)}
+                                                        <button
+                                                                type="button"
+                                                                on:click={() => verifySignature(entry)}
 								disabled={actionBusy(entry)}
 							>
 								Check status
@@ -1155,20 +1366,129 @@
 		gap: 0.75rem;
 	}
 
-	.card-actions button {
-		background: #111827;
-		color: white;
-		border: none;
-		border-radius: 0.75rem;
-		padding: 0.65rem 1.25rem;
-		font-weight: 600;
-		cursor: pointer;
-	}
+        .card-actions > button {
+                background: #111827;
+                color: white;
+                border: none;
+                border-radius: 0.75rem;
+                padding: 0.65rem 1.25rem;
+                font-weight: 600;
+                cursor: pointer;
+        }
 
-	.card-actions button[disabled] {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
+        .card-actions > button[disabled] {
+                opacity: 0.6;
+                cursor: not-allowed;
+        }
+
+        .stablecoin-picker {
+                position: relative;
+        }
+
+        .stablecoin-trigger {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                padding: 0.55rem 0.9rem;
+                border-radius: 0.75rem;
+                border: 1px solid rgba(15, 23, 42, 0.15);
+                background: white;
+                color: #111827;
+                font-weight: 600;
+                cursor: pointer;
+                min-width: 0;
+        }
+
+        .stablecoin-trigger:focus-visible {
+                outline: 2px solid #2563eb;
+                outline-offset: 2px;
+        }
+
+        .stablecoin-icon {
+                width: 1.75rem;
+                height: 1.75rem;
+                border-radius: 999px;
+                object-fit: cover;
+        }
+
+        .stablecoin-placeholder {
+                display: grid;
+                place-items: center;
+                width: 1.75rem;
+                height: 1.75rem;
+                border-radius: 999px;
+                background: #e0f2fe;
+                color: #0284c7;
+                font-weight: 700;
+                font-size: 0.95rem;
+        }
+
+        .stablecoin-text {
+                font-size: 0.95rem;
+        }
+
+        .stablecoin-chevron {
+                font-size: 0.9rem;
+                color: #475569;
+        }
+
+        .stablecoin-menu {
+                position: absolute;
+                z-index: 10;
+                top: calc(100% + 0.4rem);
+                left: 0;
+                list-style: none;
+                margin: 0;
+                padding: 0.35rem;
+                background: white;
+                border-radius: 0.75rem;
+                border: 1px solid rgba(15, 23, 42, 0.15);
+                box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
+                min-width: 13rem;
+        }
+
+        .stablecoin-menu li {
+                margin: 0;
+        }
+
+        .stablecoin-menu button {
+                width: 100%;
+                display: flex;
+                align-items: center;
+                gap: 0.6rem;
+                border: none;
+                background: transparent;
+                color: #0f172a;
+                padding: 0.5rem 0.6rem;
+                border-radius: 0.6rem;
+                cursor: pointer;
+                text-align: left;
+        }
+
+        .stablecoin-menu button.active,
+        .stablecoin-menu button:hover {
+                background: rgba(59, 130, 246, 0.12);
+        }
+
+        .stablecoin-menu button:focus-visible {
+                outline: 2px solid #2563eb;
+                outline-offset: 2px;
+        }
+
+        .stablecoin-option-text {
+                display: flex;
+                flex-direction: column;
+                gap: 0.1rem;
+        }
+
+        .stablecoin-option-text strong {
+                font-size: 0.95rem;
+        }
+
+        .stablecoin-option-text small {
+                font-size: 0.75rem;
+                color: #475569;
+        }
 
 	.action-status {
 		margin: 0;

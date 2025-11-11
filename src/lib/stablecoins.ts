@@ -5,6 +5,7 @@ export interface StablecoinMetadata {
         decimals: number;
         defaultMint: string | null;
         aliases?: string[];
+        logoUrl?: string | null;
 }
 
 const STABLECOIN_DEFINITIONS: StablecoinMetadata[] = [
@@ -13,14 +14,18 @@ const STABLECOIN_DEFINITIONS: StablecoinMetadata[] = [
                 name: 'USD Coin',
                 symbol: 'USDC',
                 decimals: 6,
-                defaultMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
+                defaultMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+                logoUrl:
+                        'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/solana/assets/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png'
         },
         {
                 code: 'USDT',
                 name: 'Tether USDt',
                 symbol: 'USDT',
                 decimals: 6,
-                defaultMint: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'
+                defaultMint: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
+                logoUrl:
+                        'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/solana/assets/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.png'
         },
         {
                 code: 'CASH',
@@ -28,7 +33,8 @@ const STABLECOIN_DEFINITIONS: StablecoinMetadata[] = [
                 symbol: 'CASH',
                 decimals: 6,
                 defaultMint: 'CASHx9KJUStyftLFWGvEVf59SGeG9sh5FfcnZMVPCASH',
-                aliases: ['PHANTOMCASH']
+                aliases: ['PHANTOMCASH'],
+                logoUrl: 'https://token-metadata.bridge.xyz/images/cash.png'
         },
         {
                 code: 'PYUSD',
@@ -36,28 +42,33 @@ const STABLECOIN_DEFINITIONS: StablecoinMetadata[] = [
                 symbol: 'PYUSD',
                 decimals: 6,
                 defaultMint: '2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo',
-                aliases: ['PYSUDC']
+                aliases: ['PYSUDC'],
+                logoUrl:
+                        'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/solana/assets/2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo/logo.png'
         },
         {
                 code: 'USDG',
                 name: 'USDG',
                 symbol: 'USDG',
                 decimals: 6,
-                defaultMint: '93Xc2WJDAHC4yyyZnkZSRmH1BidkFmRZ2Vqsx4zcuvYC'
+                defaultMint: '93Xc2WJDAHC4yyyZnkZSRmH1BidkFmRZ2Vqsx4zcuvYC',
+                logoUrl: null
         },
         {
                 code: 'USDS',
                 name: 'USDS',
                 symbol: 'USDS',
                 decimals: 9,
-                defaultMint: '5UYTrS2FgQDACidvVPqPhxiT8vzUbScL194UvNmvTaPq'
+                defaultMint: '5UYTrS2FgQDACidvVPqPhxiT8vzUbScL194UvNmvTaPq',
+                logoUrl: null
         },
         {
                 code: 'HYUSD',
                 name: 'hyUSD',
                 symbol: 'hyUSD',
                 decimals: 6,
-                defaultMint: null
+                defaultMint: null,
+                logoUrl: null
         }
 ];
 
