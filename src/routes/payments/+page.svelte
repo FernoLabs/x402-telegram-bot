@@ -22,13 +22,12 @@
 		type Address,
 		type Instruction
 	} from '@solana/kit';
-	import {
-		findAssociatedTokenPda,
-		fetchMint,
-		getCreateAssociatedTokenIdempotentInstruction,
-		getTransferInstruction,
-		TOKEN_PROGRAM_ADDRESS
-	} from '@solana-program/token';
+        import {
+                findAssociatedTokenPda,
+                getCreateAssociatedTokenIdempotentInstruction,
+                getTransferInstruction,
+                TOKEN_PROGRAM_ADDRESS
+        } from '@solana-program/token';
 	import { getTransferSolInstruction } from '@solana-program/system';
 	import { getAddMemoInstruction } from '@solana-program/memo';
 
@@ -446,13 +445,77 @@
 		);
 	}
 
-	function toBaseUnits(value: number, decimals: number): bigint {
-		if (!Number.isFinite(value) || value < 0) {
-			throw new Error('Payment amounts must be positive numbers.');
-		}
-		const factor = 10 ** decimals;
-		return BigInt(Math.round(value * factor));
-	}
+        function toBaseUnits(value: number, decimals: number): bigint {
+                if (!Number.isFinite(value) || value < 0) {
+                        throw new Error('Payment amounts must be positive numbers.');
+                }
+                const factor = 10 ** decimals;
+                return BigInt(Math.round(value * factor));
+        }
+
+        function parseMintOwner(accountInfo: unknown): string | null {
+                if (!accountInfo || typeof accountInfo !== 'object') {
+                        return null;
+                }
+
+                const value = (accountInfo as { value?: unknown }).value;
+                if (!value || typeof value !== 'object') {
+                        return null;
+                }
+
+                const owner = (value as { owner?: unknown }).owner;
+                if (typeof owner === 'string') {
+                        const trimmed = owner.trim();
+                        if (trimmed) {
+                                return trimmed;
+                        }
+                }
+
+                return null;
+        }
+
+        function parseMintDecimals(accountInfo: unknown): number | null {
+                if (!accountInfo || typeof accountInfo !== 'object') {
+                        return null;
+                }
+
+                const value = (accountInfo as { value?: unknown }).value;
+                if (!value || typeof value !== 'object') {
+                        return null;
+                }
+
+                const data = (value as { data?: unknown }).data;
+                if (!data || typeof data !== 'object' || !('parsed' in data)) {
+                        return null;
+                }
+
+                const parsed = (data as { parsed?: unknown }).parsed;
+                if (!parsed || typeof parsed !== 'object') {
+                        return null;
+                }
+
+                const info = (parsed as { info?: unknown }).info;
+                if (!info || typeof info !== 'object') {
+                        return null;
+                }
+
+                const decimals = (info as { decimals?: unknown }).decimals;
+                if (typeof decimals === 'number' && Number.isFinite(decimals)) {
+                        return decimals;
+                }
+
+                if (typeof decimals === 'string') {
+                        const trimmed = decimals.trim();
+                        if (trimmed) {
+                                const parsedDecimals = Number.parseInt(trimmed, 10);
+                                if (Number.isFinite(parsedDecimals)) {
+                                        return parsedDecimals;
+                                }
+                        }
+                }
+
+                return null;
+        }
 
 	function resolveStatus(entry: MessagePaymentHistoryEntry) {
 		const messageStatus = entry.message?.status ?? 'awaiting_payment';
@@ -592,65 +655,91 @@
 				throw new Error('Missing token mint address for this payment.');
 			}
 
-			const mint = address(mintAddress);
-			const recipientAddress = address(recipient);
-			const payerAta = await findAssociatedTokenPda({
-				owner: payerAddress,
-				mint,
-				tokenProgram: TOKEN_PROGRAM_ADDRESS
-			});
-			const recipientAta = await findAssociatedTokenPda({
-				owner: recipientAddress,
-				mint,
-				tokenProgram: TOKEN_PROGRAM_ADDRESS
-			});
-			const payerAtaAddress = payerAta[0];
-			const recipientAtaAddress = recipientAta[0];
+                        const mint = address(mintAddress);
+                        const recipientAddress = address(recipient);
+                        let mintAccountInfo: Record<string, unknown> | null = null;
 
-			const [payerAccountInfo, recipientAccountInfo] = await Promise.all([
-				rpc.getAccountInfo(payerAtaAddress, { commitment: 'confirmed', encoding: 'base64' }).send(),
-				rpc
-					.getAccountInfo(recipientAtaAddress, { commitment: 'confirmed', encoding: 'base64' })
-					.send()
-			]);
+                        try {
+                                mintAccountInfo = await rpc
+                                        .getAccountInfo(mint, {
+                                                commitment: 'confirmed',
+                                                encoding: 'jsonParsed'
+                                        })
+                                        .send();
+                        } catch {
+                                mintAccountInfo = null;
+                        }
 
-			if (!payerAccountInfo.value) {
-				instructions.push(
-					getCreateAssociatedTokenIdempotentInstruction({
-						payer: payerSigner,
-						ata: payerAtaAddress,
-						owner: payerAddress,
-						mint
-					})
-				);
-			}
+                        const mintOwner = parseMintOwner(mintAccountInfo);
+                        const fallbackProgramAddress =
+                                typeof stablecoin?.tokenProgramAddress === 'string' &&
+                                stablecoin.tokenProgramAddress.trim()
+                                        ? stablecoin.tokenProgramAddress.trim()
+                                        : String(TOKEN_PROGRAM_ADDRESS);
+                        const tokenProgramAddressString = mintOwner ?? fallbackProgramAddress;
+                        const tokenProgram = address(tokenProgramAddressString);
 
-			if (!recipientAccountInfo.value) {
-				instructions.push(
-					getCreateAssociatedTokenIdempotentInstruction({
-						payer: payerSigner,
-						ata: recipientAtaAddress,
-						owner: recipientAddress,
-						mint
-					})
-				);
-			}
+                        const payerAta = await findAssociatedTokenPda({
+                                owner: payerAddress,
+                                mint,
+                                tokenProgram
+                        });
+                        const recipientAta = await findAssociatedTokenPda({
+                                owner: recipientAddress,
+                                mint,
+                                tokenProgram
+                        });
+                        const payerAtaAddress = payerAta[0];
+                        const recipientAtaAddress = recipientAta[0];
 
-			const mintInfo = await fetchMint(rpc, mint).catch(() => null);
-			const decimals = mintInfo?.data.decimals ?? stablecoin?.decimals ?? USD_DECIMALS;
-			const baseUnits = toBaseUnits(amount, decimals);
-			if (baseUnits <= 0n) {
-				throw new Error('The token amount is too small to transfer.');
-			}
+                        const [payerAccountInfo, recipientAccountInfo] = await Promise.all([
+                                rpc.getAccountInfo(payerAtaAddress, { commitment: 'confirmed', encoding: 'base64' }).send(),
+                                rpc
+                                        .getAccountInfo(recipientAtaAddress, { commitment: 'confirmed', encoding: 'base64' })
+                                        .send()
+                        ]);
 
-			instructions.push(
-				getTransferInstruction({
-					source: payerAtaAddress,
-					destination: recipientAtaAddress,
-					authority: payerSigner,
-					amount: baseUnits
-				})
-			);
+                        if (!payerAccountInfo.value) {
+                                instructions.push(
+                                        getCreateAssociatedTokenIdempotentInstruction({
+                                                payer: payerSigner,
+                                                ata: payerAtaAddress,
+                                                owner: payerAddress,
+                                                mint,
+                                                tokenProgram
+                                        })
+                                );
+                        }
+
+                        if (!recipientAccountInfo.value) {
+                                instructions.push(
+                                        getCreateAssociatedTokenIdempotentInstruction({
+                                                payer: payerSigner,
+                                                ata: recipientAtaAddress,
+                                                owner: recipientAddress,
+                                                mint,
+                                                tokenProgram
+                                        })
+                                );
+                        }
+
+                        const decimals = parseMintDecimals(mintAccountInfo) ?? stablecoin?.decimals ?? USD_DECIMALS;
+                        const baseUnits = toBaseUnits(amount, decimals);
+                        if (baseUnits <= 0n) {
+                                throw new Error('The token amount is too small to transfer.');
+                        }
+
+                        instructions.push(
+                                getTransferInstruction(
+                                        {
+                                                source: payerAtaAddress,
+                                                destination: recipientAtaAddress,
+                                                authority: payerSigner,
+                                                amount: baseUnits
+                                        },
+                                        { programAddress: tokenProgram }
+                                )
+                        );
 		}
 
 		if (entry.request.memo) {
