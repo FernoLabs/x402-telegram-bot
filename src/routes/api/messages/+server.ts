@@ -68,7 +68,7 @@ export const POST: RequestHandler = async ({ request, platform }) => {
                 const amount = group.minBid;
                 const currency = env.PAYMENT_CURRENCY ?? 'USDC';
                 const network = env.PAYMENT_NETWORK ?? 'solana';
-                const recipient = env.RECEIVER_ADDRESS ?? group.ownerAddress;
+                const recipient = group.ownerAddress;
                 const solanaRpcUrl = env.SOLANA_RPC_URL ?? DEFAULT_SOLANA_RPC_URL;
                 const solanaMint = getSolanaMintAddressForCurrency(currency, envRecord);
                 const solanaCommitment = normalizeCommitment(env.SOLANA_COMMITMENT);

@@ -91,7 +91,7 @@ export const POST: RequestHandler = async ({ request, platform }) => {
 			return json({ error: 'Group not found' }, { status: 404 });
 		}
 
-		const receiver = env.RECEIVER_ADDRESS ?? group.ownerAddress;
+                const receiver = group.ownerAddress;
 		const currency = env.PAYMENT_CURRENCY ?? 'USDC';
 		const network = env.PAYMENT_NETWORK ?? 'solana';
                 const solanaRpcUrl = env.SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com';
