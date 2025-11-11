@@ -6,6 +6,7 @@ export interface StablecoinMetadata {
         defaultMint: string | null;
         aliases?: string[];
         logoUrl?: string | null;
+        tokenProgramAddress?: string | null;
 }
 
 const STABLECOIN_DEFINITIONS: StablecoinMetadata[] = [
@@ -34,7 +35,8 @@ const STABLECOIN_DEFINITIONS: StablecoinMetadata[] = [
                 decimals: 6,
                 defaultMint: 'CASHx9KJUStyftLFWGvEVf59SGeG9sh5FfcnZMVPCASH',
                 aliases: ['PHANTOMCASH'],
-                logoUrl: 'https://token-metadata.bridge.xyz/images/cash.png'
+                logoUrl: 'https://token-metadata.bridge.xyz/images/cash.png',
+                tokenProgramAddress: 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
         },
         {
                 code: 'PYUSD',
@@ -44,7 +46,8 @@ const STABLECOIN_DEFINITIONS: StablecoinMetadata[] = [
                 defaultMint: '2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo',
                 aliases: ['PYSUDC'],
                 logoUrl:
-                        'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/solana/assets/2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo/logo.png'
+                        'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/solana/assets/2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo/logo.png',
+                tokenProgramAddress: 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
         },
         {
                 code: 'USDG',
