@@ -932,11 +932,11 @@ export class AuctionRepository {
                 return request;
         }
 
-	async updatePaymentRequestStatus(
-		requestId: number,
-		updates: UpdatePaymentRequestStatusInput
-	): Promise<PaymentRequestRecord | null> {
-		const assignments: string[] = ['status = ?'];
+        async updatePaymentRequestStatus(
+                requestId: number,
+                updates: UpdatePaymentRequestStatusInput
+        ): Promise<PaymentRequestRecord | null> {
+                const assignments: string[] = ['status = ?'];
 		const values: Array<string | null> = [updates.status];
 
 		if (Object.prototype.hasOwnProperty.call(updates, 'lastSignature')) {
@@ -951,13 +951,37 @@ export class AuctionRepository {
 
 		assignments.push('updated_at = CURRENT_TIMESTAMP');
 
-		await this.db
-			.prepare(`UPDATE payment_requests SET ${assignments.join(', ')} WHERE id = ?`)
-			.bind(...values, requestId)
-			.run();
+                await this.db
+                        .prepare(`UPDATE payment_requests SET ${assignments.join(', ')} WHERE id = ?`)
+                        .bind(...values, requestId)
+                        .run();
 
-		return this.getPaymentRequestById(requestId);
-	}
+                return this.getPaymentRequestById(requestId);
+        }
+
+        async updatePaymentRequestCurrency(
+                requestId: number,
+                updates: { currency: string; assetAddress: string | null; assetType?: string | null }
+        ): Promise<PaymentRequestRecord | null> {
+                await this.db
+                        .prepare(
+                                `UPDATE payment_requests
+           SET currency = ?,
+               asset_address = ?,
+               asset_type = ?,
+               updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`
+                        )
+                        .bind(
+                                updates.currency,
+                                updates.assetAddress ?? null,
+                                updates.assetType ?? (updates.assetAddress ? 'spl-token' : null),
+                                requestId
+                        )
+                        .run();
+
+                return this.getPaymentRequestById(requestId);
+        }
 
 	async createPendingPayment(input: CreatePendingPaymentInput): Promise<PendingPaymentRecord> {
 		const status = input.status ?? 'pending';

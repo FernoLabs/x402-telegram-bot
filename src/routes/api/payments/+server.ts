@@ -11,13 +11,14 @@ import { deliverTelegramMessage, updateMessageStatus } from '$lib/server/message
 import { createSolanaRpc } from '@solana/kit';
 import type { Base64EncodedWireTransaction } from '@solana/transactions';
 import type { MessageRequest, MessageRequestStatus } from '$lib/types';
-import { getSolanaMintAddressForCurrency } from '$lib/stablecoins';
+import { getSolanaMintAddressForCurrency, getStablecoinMetadata } from '$lib/stablecoins';
 
 interface SubmitPaymentPayload {
-	paymentId?: string;
-	wireTransaction?: string;
-	signature?: string;
-	payer?: string | null;
+        paymentId?: string;
+        wireTransaction?: string;
+        signature?: string;
+        payer?: string | null;
+        currency?: string;
 }
 
 export const GET: RequestHandler = async ({ url, platform }) => {
@@ -147,28 +148,72 @@ export const POST: RequestHandler = async ({ request, platform }) => {
                 const envRecord = env as unknown as Record<string, unknown>;
 
                 const payload = (await request.json()) as SubmitPaymentPayload;
-		const paymentId = typeof payload.paymentId === 'string' ? payload.paymentId.trim() : '';
-		const wireTransaction =
-			typeof payload.wireTransaction === 'string' ? payload.wireTransaction.trim() : '';
-		const submittedSignature =
-			typeof payload.signature === 'string' ? payload.signature.trim() : '';
-		const payer = typeof payload.payer === 'string' ? payload.payer.trim() : null;
-		if (!paymentId) {
-			return json({ error: 'paymentId is required' }, { status: 400 });
-		}
+                const paymentId = typeof payload.paymentId === 'string' ? payload.paymentId.trim() : '';
+                const wireTransaction =
+                        typeof payload.wireTransaction === 'string' ? payload.wireTransaction.trim() : '';
+                const submittedSignature =
+                        typeof payload.signature === 'string' ? payload.signature.trim() : '';
+                const payer = typeof payload.payer === 'string' ? payload.payer.trim() : null;
+                const currencyInput =
+                        typeof payload.currency === 'string' ? payload.currency.trim().toUpperCase() : '';
+                const currencyMetadata = currencyInput ? getStablecoinMetadata(currencyInput) : null;
+                if (currencyInput && !currencyMetadata) {
+                        return json({ error: 'Unsupported stablecoin selection' }, { status: 400 });
+                }
+                if (currencyMetadata && !currencyMetadata.defaultMint) {
+                        return json({ error: 'Stablecoin is not available on Solana' }, { status: 400 });
+                }
+                if (!paymentId) {
+                        return json({ error: 'paymentId is required' }, { status: 400 });
+                }
 
-		if (!wireTransaction && !submittedSignature) {
+                if (!wireTransaction && !submittedSignature) {
 			return json({ error: 'paymentId and a transaction payload are required' }, { status: 400 });
 		}
 
-		const repo = new AuctionRepository(env.DB);
-		const requestRecord = await repo.getPaymentRequestByPaymentId(paymentId);
+                const repo = new AuctionRepository(env.DB);
+                let requestRecord = await repo.getPaymentRequestByPaymentId(paymentId);
 
-		if (!requestRecord) {
-			return json({ error: 'Payment request not found' }, { status: 404 });
-		}
+                if (!requestRecord) {
+                        return json({ error: 'Payment request not found' }, { status: 404 });
+                }
 
-		const messageRecord = await repo.getMessageRequestByPaymentId(paymentId);
+                if (currencyMetadata) {
+                        const normalizedCurrency = currencyMetadata.code;
+                        const tokenMintOverride = getSolanaMintAddressForCurrency(
+                                normalizedCurrency,
+                                envRecord
+                        );
+
+                        if (!tokenMintOverride) {
+                                return json({ error: 'Stablecoin mint not configured' }, { status: 400 });
+                        }
+
+                        if (
+                                requestRecord.currency !== normalizedCurrency ||
+                                requestRecord.assetAddress !== tokenMintOverride ||
+                                requestRecord.assetType !== 'spl-token'
+                        ) {
+                                const updated = await repo.updatePaymentRequestCurrency(requestRecord.id, {
+                                        currency: normalizedCurrency,
+                                        assetAddress: tokenMintOverride,
+                                        assetType: 'spl-token'
+                                });
+                                if (updated) {
+                                        requestRecord = updated;
+                                } else {
+                                        requestRecord = {
+                                                ...requestRecord,
+                                                currency: normalizedCurrency,
+                                                assetAddress: tokenMintOverride,
+                                                assetType: 'spl-token',
+                                                updatedAt: new Date().toISOString()
+                                        };
+                                }
+                        }
+                }
+
+                const messageRecord = await repo.getMessageRequestByPaymentId(paymentId);
 
 		const expiresAt = Date.parse(requestRecord.expiresAt);
 		if (
