@@ -25,7 +25,7 @@
         import {
                 findAssociatedTokenPda,
                 getCreateAssociatedTokenIdempotentInstruction,
-                getTransferInstruction,
+                getTransferCheckedInstruction,
                 TOKEN_PROGRAM_ADDRESS
         } from '@solana-program/token';
 	import { getTransferSolInstruction } from '@solana-program/system';
@@ -730,12 +730,14 @@
                         }
 
                         instructions.push(
-                                getTransferInstruction(
+                                getTransferCheckedInstruction(
                                         {
                                                 source: payerAtaAddress,
+                                                mint,
                                                 destination: recipientAtaAddress,
                                                 authority: payerSigner,
-                                                amount: baseUnits
+                                                amount: baseUnits,
+                                                decimals
                                         },
                                         { programAddress: tokenProgram }
                                 )
