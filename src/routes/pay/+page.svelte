@@ -2,11 +2,11 @@
         import { SUPPORTED_STABLECOINS, type StablecoinMetadata } from '$lib/stablecoins';
         import type { PageData } from './$types';
 
-        let { data } = $props<{ data: PageData }>();
+        export let data: PageData;
 
         const supportedStablecoins: StablecoinMetadata[] = SUPPORTED_STABLECOINS;
         const defaultCurrency = data.payment.currency ? data.payment.currency.toUpperCase() : 'USDC';
-        let selectedCurrency = $state(defaultCurrency);
+        let selectedCurrency = defaultCurrency;
         const stablecoinOptions: StablecoinMetadata[] = supportedStablecoins.some(
                 (coin) => coin.code === defaultCurrency
         )
@@ -84,25 +84,30 @@
                 return url.toString();
         };
 
-        const selectedStablecoin = $derived(
-                stablecoinOptions.find((coin) => coin.code === selectedCurrency) ?? null
-        );
-        const amountDisplay = $derived(formatAmount(data.payment.amount, selectedCurrency));
-        const currencyDisplay = $derived(
-                selectedStablecoin
-                        ? `${selectedStablecoin.symbol} (${selectedStablecoin.name})`
-                        : selectedCurrency
-        );
-        const checkoutUrl = $derived(
+        let selectedStablecoin: StablecoinMetadata | null = null;
+        let amountDisplay = formatAmount(data.payment.amount, selectedCurrency);
+        let currencyDisplay = selectedCurrency;
+        let checkoutUrl =
                 selectedCurrency === defaultCurrency && data.payment.checkout
                         ? data.payment.checkout
-                        : buildFallbackCheckoutUrl(selectedCurrency)
-        );
-        const facilitatorUrl = $derived(data.payment.facilitator ?? null);
-        const expiresAtDisplay = $derived(formatExpiration(data.payment.expiresAt ?? null));
-        const pageDescription = $derived(
-                `Send ${amountDisplay} to ${data.payment.recipient} on ${data.payment.network}.`
-        );
+                        : buildFallbackCheckoutUrl(selectedCurrency);
+        const facilitatorUrl = data.payment.facilitator ?? null;
+        let expiresAtDisplay = formatExpiration(data.payment.expiresAt ?? null);
+        let pageDescription = `Send ${amountDisplay} to ${data.payment.recipient} on ${data.payment.network}.`;
+
+        $: selectedStablecoin =
+                stablecoinOptions.find((coin) => coin.code === selectedCurrency) ?? null;
+        $: amountDisplay = formatAmount(data.payment.amount, selectedCurrency);
+        $: currencyDisplay = selectedStablecoin
+                ? `${selectedStablecoin.symbol} (${selectedStablecoin.name})`
+                : selectedCurrency;
+        $: checkoutUrl =
+                selectedCurrency === defaultCurrency && data.payment.checkout
+                        ? data.payment.checkout
+                        : buildFallbackCheckoutUrl(selectedCurrency);
+        $: expiresAtDisplay = formatExpiration(data.payment.expiresAt ?? null);
+        $: pageDescription =
+                `Send ${amountDisplay} to ${data.payment.recipient} on ${data.payment.network}.`;
 </script>
 
 <svelte:head>
